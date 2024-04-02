@@ -1,7 +1,7 @@
 # system definition 
 # -----------------
 filename = "water_monomers_1k.xyz" # XYZ file
-species = ["H","O"] # ordered list of species
+species = ["H","O"]
 qmcode = 'pyscf'
 average = True
 parallel = False 
@@ -19,8 +19,8 @@ rcut2 = 4.0
 nrad2 = 4
 nang2 = 5
 sig2 = 0.3
-neighspe1 = ["H","O"] # ordered list of species
-neighspe2 = ["H","O"] # ordered list of species
+neighspe1 = ["H","O"] 
+neighspe2 = ["H","O"]
 
 # Feature sparsification parameters
 # ---------------------------------
