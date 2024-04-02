@@ -1,7 +1,6 @@
 # system definition 
 # -----------------
 filename = "water_monomers_1k.xyz" # XYZ file
-#filename = "water_dimers_10.xyz" # XYZ file
 species = ["H","O"] # ordered list of species
 qmcode = 'pyscf'
 average = True
@@ -12,13 +11,13 @@ field = False
 # ---------------------------------------
 rep1 = 'rho'
 rcut1 = 4.0
-nrad1 = 8
-nang1 = 6
+nrad1 = 4
+nang1 = 5
 sig1 = 0.3
 rep2 = 'rho'
 rcut2 = 4.0
-nrad2 = 8
-nang2 = 6
+nrad2 = 4
+nang2 = 5
 sig2 = 0.3
 neighspe1 = ["H","O"] # ordered list of species
 neighspe2 = ["H","O"] # ordered list of species
@@ -27,20 +26,19 @@ neighspe2 = ["H","O"] # ordered list of species
 # ---------------------------------
 sparsify = False 
 nsamples = 100 # Number of structures to use for feature sparsification
-ncut = 1000 # Set ncut = 0 to skip feature sparisification
+ncut = 0 # Set ncut = 0 to skip feature sparisification
 
 # paths to data
 # -------------
 saltedpath = './'
 saltedname = 'test'
+path2qm = "qmdata/" # path to the raw PySCF output
 
-# AIMS variables 
+# PySCF variables 
 # --------------
 functional = "b3lyp" # DFT functional
 qmbasis = "cc-pvqz" # atomic basis
 dfbasis = "RI-cc-pvqz" # auxiliary basis
-
-path2qm = "./" # path to the raw AIMS output
 
 # ML variables  
 # ------------
@@ -63,4 +61,5 @@ trainsel = 'random'
 
 # Prediction Paths
 # ------------
-predname = 'dimer'
+predname = 'prediction'
+predict_filename = "water_pred.xyz"
