@@ -102,7 +102,7 @@ def build():
         print(f"{iconf} start", flush=True)
 
         # load reference QM data
-        coefs = np.load(osp.join(inp.path2qm, inp.coefdir, f"coefficients_conf{iconf}.npy"))
+        coefs = np.load(osp.join(inp.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"))
         Tsize = len(coefs)
 
         # initialize RKHS feature vectors for each channel

@@ -161,10 +161,10 @@ def build():
 
             # load reference QM data
             ref_projs = np.load(osp.join(
-                inp.path2qm, inp.projdir, f"projections_conf{trainrange[iconf]}.npy"
+                inp.path2qm, "projections", f"projections_conf{trainrange[iconf]}.npy"
             ))
             ref_coefs = np.load(osp.join(
-                inp.path2qm, inp.coefdir, f"coefficients_conf{trainrange[iconf]}.npy"
+                inp.path2qm, "coefficients", f"coefficients_conf{trainrange[iconf]}.npy"
             ))
 
             if inp.average:
@@ -233,7 +233,7 @@ def build():
     psi_list = []
     for iconf in trainrange:
         ovlp_list.append(np.load(osp.join(
-            inp.path2qm, inp.ovlpdir, f"overlap_conf{iconf}.npy"
+            inp.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
         )))
         # load feature vector as a scipy sparse object
         psi_list.append(sparse.load_npz(osp.join(
