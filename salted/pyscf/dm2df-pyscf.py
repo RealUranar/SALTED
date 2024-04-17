@@ -28,7 +28,7 @@ def set_variable_values(args):
     iconf = args.confidx
     return iconf
 
-args = add_command_line_arguments()
+args = add_command_line_arguments("")
 iconf = set_variable_values(args)
 
 xyzfile = read(inp.filename,":")
