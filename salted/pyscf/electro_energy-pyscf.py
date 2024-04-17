@@ -6,6 +6,7 @@ from pyscf import gto
 from ase.io import read
 from scipy import special
 
+from salted.pyscf.get_basis_info import get_aux_basis_name
 import basis  # WARNING: relative import
 sys.path.insert(0, './')
 import inp
@@ -17,7 +18,8 @@ for i in range(len(spelist)):
     spe_dict[i] = spelist[i]
 
 # read basis
-[lmax,nmax] = basis.basiset(inp.dfbasis)
+[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+
 
 llist = []
 nlist = []

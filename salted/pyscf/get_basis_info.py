@@ -37,7 +37,7 @@ def build(dryrun: bool = False, force_overwrite: bool = False):
         print("Dryrun mode, not writing to the database")
         print(f"{basis_data=}")
     else:
-        BasisClient().write(inp.dfbasis, basis_data, force_overwrite)
+        BasisClient().write(get_aux_basis_name(qmbasis), basis_data, force_overwrite)
 
 
 
@@ -92,7 +92,15 @@ def collect_l_nums(data: List) -> SpeciesBasisData:
         "nmax": l_cnt,
     }
 
-
+def get_aux_basis_name(qmbasis: str) -> str:
+    """get the auxiliary basis name for density fitting from PySCF
+    Args:
+        qmbasis: quantum chemistry basis set name, e.g. cc-pvdz
+    Returns:
+        str: auxiliary basis name
+    """
+    ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(qmbasis)][0]
+    return ribasis
 
 if __name__ == "__main__":
     print("Please call `python -m salted.get_basis_info` instead of this file")

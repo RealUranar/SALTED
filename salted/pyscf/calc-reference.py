@@ -8,7 +8,7 @@ from pyscf import gto
 from pyscf import scf,dft
 from pyscf import lib
 from salted import basis  # WARNING: relative import
-
+from salted.pyscf.get_basis_info import get_aux_basis_name
 
 lib.num_threads(10)
 
@@ -20,7 +20,8 @@ geoms = read(inp.predict_filename,":")
 conf_list = range(len(geoms))
 
 # read basis
-[lmax,nmax] = basis.basiset(inp.dfbasis)
+[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+
 
 for iconf in conf_list:
     geom = geoms[iconf]
@@ -34,7 +35,7 @@ for iconf in conf_list:
 
     # Get PySCF objects for wave-function and density-fitted basis
     mol = gto.M(atom=atoms,basis=inp.qmbasis)
-    mol.verbose = 4
+    mol.verbose = 2
     mol.max_memory = 10_000
     m = dft.RKS(mol)
     if "r2scan" in inp.functional.lower():

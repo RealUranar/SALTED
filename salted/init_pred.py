@@ -9,6 +9,7 @@ from scipy import special
 
 from salted import basis
 
+
 def build():
 
     sys.path.insert(0, './')
@@ -22,7 +23,12 @@ def build():
     reg = inp.regul
   
     # read basis
-    [lmax,nmax] = basis.basiset(inp.dfbasis)
+    if inp.qmcode=="pyscf":
+        from salted.pyscf.get_basis_info import get_aux_basis_name
+        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+    else:
+        [lmax,nmax] = basis.basiset(inp.dfbasis)
+
     llist = []
     nlist = []
     for spe in species:

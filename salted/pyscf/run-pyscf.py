@@ -3,15 +3,14 @@ import os
 import sys
 import glob
 import re
-from multiprocessing import Pool, cpu_count
+# from multiprocessing import Pool, cpu_count
 import tqdm
 import numpy as np
 from ase.io import read
 from pyscf import gto
-from pyscf import scf,dft
+from pyscf import scf,dft, df
 from pyscf import lib
-from pyscf import grad
-from scipy import special
+from pyscf.gto import basis
 
 sys.path.insert(0, './')
 import inp
@@ -71,7 +70,7 @@ def doSCF(i):
     m.grids.radi_method = dft.gauss_chebyshev
     m.grids.level = 0
     m = m.density_fit()
-    m.with_df.auxbasis = 'def2-tzvp-jkfit'
+    m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qmbasis)][0]
     m.xc = inp.functional
     #Read checkpoint from a preliminary run
     m.chkfile = 'start_checkpoint'

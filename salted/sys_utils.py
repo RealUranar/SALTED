@@ -14,7 +14,11 @@ def read_system(filename=inp.filename):
     spelist = inp.species
 
     # read basis
-    [lmax,nmax] = basis.basiset(inp.dfbasis)
+    if inp.qmcode=="pyscf":
+        from salted.pyscf.get_basis_info import get_aux_basis_name
+        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+    else:
+        [lmax,nmax] = basis.basiset(inp.dfbasis)
     llist = []
     nlist = []
     for spe in spelist:

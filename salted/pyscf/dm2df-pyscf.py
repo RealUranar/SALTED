@@ -11,6 +11,7 @@ import tqdm
 
 import glob, re
 import salted.cython.dm2df_fast_reorder as dm2df
+from salted.pyscf.get_basis_info import get_aux_basis_name
 
 debug = False
 from salted import basis
@@ -43,7 +44,7 @@ else:
 
 
 #See if any structures already exist, if they do, do not compute again.
-alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{osp.join(inp.path2qm, inp.coefdir)}/*")], dtype=int).flatten()
+alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{osp.join(inp.path2qm, 'coefficients')}/*")], dtype=int).flatten()
 if len(alreadyCalculated) > 0:
     print("Found existing calculations, resuming from before")
     conf_list = list(conf_list)
@@ -51,7 +52,7 @@ if len(alreadyCalculated) > 0:
         conf_list.remove(i)
 
 # read basis
-[lmax,nmax] = basis.basiset(inp.dfbasis)
+[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
     
 dirpath = os.path.join(inp.path2qm, "coefficients")
 if not os.path.exists(dirpath):
