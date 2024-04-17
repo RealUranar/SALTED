@@ -161,7 +161,7 @@ def build():
         "radial_basis": {"Gto": {"spline_accuracy": 1e-6}}
     }
 
-    frames = read(validation_xyz_file,":")
+    frames = read(osp.join(valPAth, validation_xyz_file),":")
     frames = [frames[i] for i in conf_range]
 
     if rank == 0: print(f"The dataset contains {ndata_true} frames.")
@@ -474,7 +474,7 @@ def build():
             av_coefs[spe] = np.load(f"averages_{spe}.npy")
 
 
-    errorfile = open("error.dat","a")
+    errorfile = open("errors.dat","a")
     error_density = 0
     variance = 0
     # Perform equivariant predictions
@@ -546,13 +546,8 @@ def build():
         error_density = comm.allreduce(error_density)
         variance = comm.allreduce(variance)
         if rank == 0:
-            errs = np.loadtxt(errorfile)
-            np.savetxt(errorfile, errs[errs[:,0].argsort()])
-            if inp.qmcode == "cp2k":
-                dips = np.loadtxt(errorfile)
-                np.savetxt(errorfile, dips[dips[:,0].argsort()])
-                qs = np.loadtxt(errorfile)
-                np.savetxt(errorfile, qs[qs[:,0].argsort()])
+            errs = np.loadtxt("errors.dat")
+            np.savetxt("errors.dat", errs[errs[:,0].argsort()])
     if rank == 0:
         print(f"\n % RMSE: {(100*np.sqrt(error_density/variance)):<3.3f}", flush=True)
 
