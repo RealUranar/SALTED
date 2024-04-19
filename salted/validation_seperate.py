@@ -466,14 +466,15 @@ def build():
         if rank == 0: print("rkhs time:", time.time()-rkhsstart,flush=True)
 
     predstart = time.time()
-
+    comm.Barrier()
     # Load spherical averages if required
     if inp.average:
         av_coefs = {}
         for spe in species:
             av_coefs[spe] = np.load(f"averages_{spe}.npy")
 
-
+    with open("errors.dat","w"):
+        pass
     errorfile = open("errors.dat","a")
     error_density = 0
     variance = 0
@@ -550,7 +551,8 @@ def build():
             np.savetxt("errors.dat", errs[errs[:,0].argsort()])
     if rank == 0:
         print(f"\n % RMSE: {(100*np.sqrt(error_density/variance)):<3.3f}", flush=True)
-
+        with open("errors.dat","a") as f:
+            print(f"Total RMSE: {(100*np.sqrt(error_density/variance)):<3.3f}", file=f)
 
 
 
