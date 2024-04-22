@@ -72,20 +72,17 @@ def doSCF(i):
     m = m.density_fit()
     m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qmbasis)][0]
     m.xc = inp.functional
-    #Read checkpoint from a preliminary run
-    m.chkfile = 'start_checkpoint'
-    m.init_guess = "chkfile"
-    if i % 100 == 0:
-        m.kernel()
-    else:
-        m.kernel(dump_chk = False)
+    m.kernel()
+    # #Read checkpoint from a preliminary run
+    # m.chkfile = 'start_checkpoint'
+    # m.init_guess = "chkfile"
+    # if i % 100 == 0:
+    #     m.kernel()
+    # else:
+    #     m.kernel(dump_chk = False)
 
     dm = m.make_rdm1()
     np.save(os.path.join(dirpath, f"dm_conf{i+1}.npy"), dm)
-
-
-
-lib.num_threads(22)
 
 for i in tqdm.tqdm(conf_list,total=len(conf_list)):
     doSCF(i)
