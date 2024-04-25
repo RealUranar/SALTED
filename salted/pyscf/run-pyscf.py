@@ -84,6 +84,6 @@ def doSCF(i):
     dm = m.make_rdm1()
     np.save(os.path.join(dirpath, f"dm_conf{i+1}.npy"), dm)
 
-for i in tqdm.tqdm(conf_list,total=len(conf_list)):
+for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
     doSCF(i)
 

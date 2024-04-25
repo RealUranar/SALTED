@@ -15,6 +15,10 @@ from multiprocessing import Pool, current_process
 sys.path.insert(0, './')
 import inp
 
+# Initialize geometry
+geoms = read(inp.filename,":")
+dirpath = os.path.join(inp.path2qm, "density_matrices")
+
 def add_command_line_arguments(parsetext):
     parser = argparse.ArgumentParser(description=parsetext,formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-iconf", "--confidx",  type=int, default=-1, help="Structure index")
@@ -65,10 +69,6 @@ if __name__ == "__main__":
     args = add_command_line_arguments("")
     iconf = set_variable_values(args)
 
-    # Initialize geometry
-    geoms = read(inp.filename,":")
-    dirpath = os.path.join(inp.path2qm, "density_matrices")
-
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
 
@@ -87,12 +87,13 @@ if __name__ == "__main__":
         for i in alreadyCalculated:
             conf_list.remove(i)
 
-    coresPerThread = 2
-    print(f"Running {len(conf_list)} PySCF Calculations with {lib.num_threads() // coresPerThread} threads and {coresPerThread} cores per thread.")
-    cpus = lib.num_threads() // coresPerThread
-    with lib.with_omp_threads(coresPerThread):
-        with Pool(processes=cpus) as p:
-            with tqdm.tqdm(total=len(conf_list)) as pbar:
-                async_results = [p.apply_async(doSCF, args=(i,), callback=lambda: pbar.update()) for i in conf_list]
-                results = [async_result.get() for async_result in async_results]
-
+    # coresPerThread = 2
+    # print(f"Running {len(conf_list)} PySCF Calculations with {lib.num_threads() // coresPerThread} threads and {coresPerThread} cores per thread.")
+    # cpus = lib.num_threads() // coresPerThread
+    # with lib.with_omp_threads(coresPerThread):
+    #     with Pool(processes=cpus) as p:
+    #         with tqdm.tqdm(total=len(conf_list)) as pbar:
+    #             async_results = [p.apply_async(doSCF, args=(i,), callback=lambda: pbar.update()) for i in conf_list]
+    #             results = [async_result.get() for async_result in async_results]
+    for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
+        doSCF(i)
