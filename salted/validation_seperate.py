@@ -465,7 +465,6 @@ def build():
 
         if rank == 0: print("rkhs time:", time.time()-rkhsstart,flush=True)
 
-    predstart = time.time()
     comm.Barrier()
     # Load spherical averages if required
     if inp.average:

@@ -4,7 +4,7 @@ import sys
 import os.path as osp
 
 import numpy as np
-from pyscf import gto
+from pyscf import gto, df
 from ase.io import read
 from scipy import special
 import tqdm
@@ -85,7 +85,7 @@ for iconf in tqdm.tqdm(conf_list):
     
     # Get PySCF objects for wave-function and density-fitted basis
     mol = gto.M(atom=atoms,basis=inp.qmbasis)
-    ribasis = inp.qmbasis+" jkfit"
+    ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qmbasis)][0]
     auxmol = gto.M(atom=atoms,basis=ribasis)
     pmol = mol + auxmol
     

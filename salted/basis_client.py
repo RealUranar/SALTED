@@ -91,7 +91,7 @@ class BasisClient:
         """
         if _dev_data_fpath is None:
             self.data_fpath = os.path.join(
-                self.__salted_package_root, self.DEFAULT_DATA_FNAME
+                self.DEFAULT_DATA_FNAME  #As i'm trying to run this inside a read only container, save this into the working directory
             )
         else:
             print(

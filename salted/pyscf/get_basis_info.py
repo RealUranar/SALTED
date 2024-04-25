@@ -1,9 +1,11 @@
 """Translate basis info from PySCF calculation to SALTED basis info"""
 
-import os
+import os, sys
 from typing import Dict, List
 
+sys.path.insert(0, './')
 import inp
+
 import yaml
 from ase.io import read
 
