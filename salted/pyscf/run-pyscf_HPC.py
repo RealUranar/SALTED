@@ -53,7 +53,11 @@ def doSCF(i):
     m.xc = inp.functional
     
     # print(f"Process: {current_process().name.split('-')[-1]} - Calculating density matrix for configuration {i+1}", file = sys.stdout.flush(), flush=True)
-    m.kernel()
+    try:
+        m.kernel()
+    except ValueError:
+        print(f"Process: {current_process().name.split('-')[-1]} - Error in configuration {i+1}", file = sys.stdout.flush(), flush=True)
+        return
     # #Read checkpoint from a preliminary run
     # m.chkfile = 'start_checkpoint'
     # m.init_guess = "chkfile"
