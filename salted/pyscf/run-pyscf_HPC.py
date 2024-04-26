@@ -21,7 +21,7 @@ dirpath = os.path.join(inp.path2qm, "density_matrices")
 
 def add_command_line_arguments(parsetext):
     parser = argparse.ArgumentParser(description=parsetext,formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-iconf", "--confidx",  type=int, default=-1, help="Structure index")
+    parser.add_argument("-iconf", "--confidx",  type=int, default=-1, help="Structure index starting from 1. If -1, all structures will be calculated.")
     args = parser.parse_args()
     return args
 
@@ -61,16 +61,10 @@ def doSCF(i):
     except ValueError:
         print(f"Process: {current_process().name.split('-')[-1]} - Error in configuration {i+1}", file = sys.stdout.flush(), flush=True)
         return
-    # #Read checkpoint from a preliminary run
-    # m.chkfile = 'start_checkpoint'
-    # m.init_guess = "chkfile"
-    # if i % 100 == 0:
-    #     m.kernel()
-    # else:
-    #     m.kernel(dump_chk = False)
 
     dm = m.make_rdm1()
     np.save(os.path.join(dirpath, f"dm_conf{i+1}.npy"), dm)
+    
     
 if __name__ == "__main__":
     args = add_command_line_arguments("")
@@ -81,18 +75,27 @@ if __name__ == "__main__":
 
     if iconf != -1:
         print("Calculating density matrix for configuration", iconf)
-        iconf -= 1 # 0-based indexing
-        conf_list = [iconf]
+        conf_list = np.array([iconf]) -1 # 0-based indexing
     else:
         conf_list = range(len(geoms))
 
     #See if any structures already exist, if they do, do not compute again.
-    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*")], dtype=int).flatten()-1
+    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()-1
     if len(alreadyCalculated) > 0:
         print("Found existing calculations, resuming from bevore")
-        conf_list = list(conf_list)
-        for i in alreadyCalculated:
-            conf_list.remove(i)
+        conf_list = np.setdiff1d(np.array(conf_list), alreadyCalculated)
+    
+    if conf_list.size == 0:
+        print("All configurations have already been calculated.")
+        sys.exit()
+
+    if iconf != -1:
+        for i in conf_list:
+            doSCF(i)
+    else:
+        for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
+            doSCF(i)
+
 
     # coresPerThread = 2
     # print(f"Running {len(conf_list)} PySCF Calculations with {lib.num_threads() // coresPerThread} threads and {coresPerThread} cores per thread.")
@@ -102,5 +105,5 @@ if __name__ == "__main__":
     #         with tqdm.tqdm(total=len(conf_list)) as pbar:
     #             async_results = [p.apply_async(doSCF, args=(i,), callback=lambda: pbar.update()) for i in conf_list]
     #             results = [async_result.get() for async_result in async_results]
-    for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
-        doSCF(i)
+    # for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
+    #     doSCF(i)

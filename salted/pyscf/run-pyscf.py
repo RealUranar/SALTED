@@ -37,22 +37,19 @@ if not os.path.exists(dirpath):
 
 if iconf != -1:
     print("Calculating density matrix for configuration", iconf)
-    iconf -= 1 # 0-based indexing
-    conf_list = [iconf]
+    conf_list = np.array([iconf]) -1 # 0-based indexing
 else:
     conf_list = range(len(geoms))
 
 #See if any structures already exist, if they do, do not compute again.
-alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*")], dtype=int).flatten()-1
+alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()-1
 if len(alreadyCalculated) > 0:
     print("Found existing calculations, resuming from bevore")
-    conf_list = list(conf_list)
-    for i in alreadyCalculated:
-        conf_list.remove(i)
+    conf_list = np.setdiff1d(np.array(conf_list), alreadyCalculated)
 
 def doSCF(i):
     geom = geoms[i]
-    geom.translate(-geom.get_center_of_mass(), unit='angstrom', max_memory=12000)
+    geom.translate(-geom.get_center_of_mass())
     symb = geom.get_chemical_symbols()
     coords = geom.get_positions()
     natoms = len(coords)
@@ -62,7 +59,7 @@ def doSCF(i):
         atoms.append([symb[j],(coord[0],coord[1],coord[2])])
 
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=inp.qmbasis)
+    mol = gto.M(atom=atoms,basis=inp.qmbasis, unit='angstrom', max_memory=12000)
     mol.verbose = 0
     m = dft.rks.RKS(mol)
     
