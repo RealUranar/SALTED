@@ -70,31 +70,20 @@ if __name__ == "__main__":
     args = add_command_line_arguments("")
     iconf = set_variable_values(args)
 
+    if iconf == -1:
+        print()
+        
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
 
-    if iconf != -1:
-        print("Calculating density matrix for configuration", iconf)
-        conf_list = np.array([iconf]) -1 # 0-based indexing
-    else:
-        conf_list = range(len(geoms))
-
     #See if any structures already exist, if they do, do not compute again.
     alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()-1
-    if len(alreadyCalculated) > 0:
-        print("Found existing calculations, resuming from bevore")
-        conf_list = np.setdiff1d(np.array(conf_list), alreadyCalculated)
-    
-    if conf_list.size == 0:
-        print("All configurations have already been calculated.")
+    if iconf in alreadyCalculated:
+        print(f"Configuration {iconf} already calculated.")
         sys.exit()
 
-    if iconf != -1:
-        for i in conf_list:
-            doSCF(i)
-    else:
-        for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
-            doSCF(i)
+    doSCF(iconf)
+
 
 
     # coresPerThread = 2
