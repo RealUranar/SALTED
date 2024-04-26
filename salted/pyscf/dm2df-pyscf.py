@@ -85,7 +85,7 @@ for iconf in tqdm.tqdm(conf_list):
     
     # Get PySCF objects for wave-function and density-fitted basis
     mol = gto.M(atom=atoms,basis=inp.qmbasis)
-    ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qmbasis)][0]
+    ribasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(inp.qmbasis)][0]
     auxmol = gto.M(atom=atoms,basis=ribasis)
     pmol = mol + auxmol
     

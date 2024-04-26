@@ -83,7 +83,7 @@ if len(alreadyCalculated) > 0:
 
 #If only one configuration is to be calculated, do it here
 if iconf != -1 and len(conf_list) != 0:
-    doSCF(iconf, verbose=3)
+    doSCF(iconf, verbose=4)
     print("Done! (:")
 else:#Else loop over all configurations
     for i in tqdm.tqdm(conf_list,total=len(geoms), initial=len(geoms)-len(conf_list)):
