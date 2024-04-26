@@ -31,6 +31,8 @@ def set_variable_values(args):
 
 def doSCF(i):
     geom = geoms[i]
+    #Translate Molecule to the coordinate origin
+    geom.translate(-geom.get_center_of_mass())
     symb = geom.get_chemical_symbols()
     coords = geom.get_positions()
     natoms = len(coords)
@@ -39,8 +41,9 @@ def doSCF(i):
         coord = coords[j]
         atoms.append([symb[j],(coord[0],coord[1],coord[2])])
 
+    #MaxMemory based on the assumption that 1 core has acces to 3.9 GB of memory
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=inp.qmbasis)
+    mol = gto.M(atom=atoms,basis=inp.qmbasis, unit='angstrom', max_memory=lib.num_threads()*3900)
     mol.verbose = 0
     m = dft.rks.RKS(mol)
     

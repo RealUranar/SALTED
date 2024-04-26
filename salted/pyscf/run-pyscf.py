@@ -52,6 +52,7 @@ if len(alreadyCalculated) > 0:
 
 def doSCF(i):
     geom = geoms[i]
+    geom.translate(-geom.get_center_of_mass(), unit='angstrom', max_memory=12000)
     symb = geom.get_chemical_symbols()
     coords = geom.get_positions()
     natoms = len(coords)
@@ -72,7 +73,11 @@ def doSCF(i):
     m = m.density_fit()
     m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qmbasis)][0]
     m.xc = inp.functional
-    m.kernel()
+    try:
+        m.kernel()
+    except ValueError:
+        print(f"Error in configuration {i+1}", file = sys.stdout.flush(), flush=True)
+        return
     # #Read checkpoint from a preliminary run
     # m.chkfile = 'start_checkpoint'
     # m.init_guess = "chkfile"
