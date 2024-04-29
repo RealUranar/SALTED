@@ -11,6 +11,7 @@ from pyscf.gto import basis
 from ase.io import read
 from scipy import special
 
+import salted.cython.dm2df_fast_reorder as dm2df
 from salted.basis_client import BasisClient, SpeciesBasisData
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps
 
@@ -53,44 +54,48 @@ def cal_df_coeffs_old(
     Coef = np.zeros(len(rho))
     Over = np.zeros((len(rho), len(rho)))
 
-    i1 = 0
-    for iat in range(len(atoms)):
-        spe1 = atoms[iat][0]
-        for l1 in range(lmax[spe1]+1):
-            for n1 in range(nmax[(spe1,l1)]):
-                for im1 in range(2*l1+1):
-                    if l1==1 and im1!=2:
-                        Coef[i1] = rho[i1+1]
-                    elif l1==1 and im1==2:
-                        Coef[i1] = rho[i1-2]
-                    else:
-                        Coef[i1] = rho[i1]
-                    i2 = 0
-                    for jat in range(len(atoms)):
-                        spe2 = atoms[jat][0]
-                        for l2 in range(lmax[spe2]+1):
-                            for n2 in range(nmax[(spe2,l2)]):
-                                for im2 in range(2*l2+1):
-                                    if l1==1 and im1!=2 and l2!=1:
-                                        Over[i1,i2] = overlap[i1+1,i2]
-                                    elif l1==1 and im1==2 and l2!=1:
-                                        Over[i1,i2] = overlap[i1-2,i2]
-                                    elif l2==1 and im2!=2 and l1!=1:
-                                        Over[i1,i2] = overlap[i1,i2+1]
-                                    elif l2==1 and im2==2 and l1!=1:
-                                        Over[i1,i2] = overlap[i1,i2-2]
-                                    elif l1==1 and im1!=2 and l2==1 and im2!=2:
-                                        Over[i1,i2] = overlap[i1+1,i2+1]
-                                    elif l1==1 and im1!=2 and l2==1 and im2==2:
-                                        Over[i1,i2] = overlap[i1+1,i2-2]
-                                    elif l1==1 and im1==2 and l2==1 and im2!=2:
-                                        Over[i1,i2] = overlap[i1-2,i2+1]
-                                    elif l1==1 and im1==2 and l2==1 and im2==2:
-                                        Over[i1,i2] = overlap[i1-2,i2-2]
-                                    else:
-                                        Over[i1,i2] = overlap[i1,i2]
-                                    i2 += 1
-                    i1 += 1
+    symb = [at[0] for at in atoms]
+    print(symb)
+
+    Coef, Over = dm2df.reorder(rho, overlap, symb, lmax, nmax)
+    # i1 = 0
+    # for iat in range(len(atoms)):
+    #     spe1 = atoms[iat][0]
+    #     for l1 in range(lmax[spe1]+1):
+    #         for n1 in range(nmax[(spe1,l1)]):
+    #             for im1 in range(2*l1+1):
+    #                 if l1==1 and im1!=2:
+    #                     Coef[i1] = rho[i1+1]
+    #                 elif l1==1 and im1==2:
+    #                     Coef[i1] = rho[i1-2]
+    #                 else:
+    #                     Coef[i1] = rho[i1]
+    #                 i2 = 0
+    #                 for jat in range(len(atoms)):
+    #                     spe2 = atoms[jat][0]
+    #                     for l2 in range(lmax[spe2]+1):
+    #                         for n2 in range(nmax[(spe2,l2)]):
+    #                             for im2 in range(2*l2+1):
+    #                                 if l1==1 and im1!=2 and l2!=1:
+    #                                     Over[i1,i2] = overlap[i1+1,i2]
+    #                                 elif l1==1 and im1==2 and l2!=1:
+    #                                     Over[i1,i2] = overlap[i1-2,i2]
+    #                                 elif l2==1 and im2!=2 and l1!=1:
+    #                                     Over[i1,i2] = overlap[i1,i2+1]
+    #                                 elif l2==1 and im2==2 and l1!=1:
+    #                                     Over[i1,i2] = overlap[i1,i2-2]
+    #                                 elif l1==1 and im1!=2 and l2==1 and im2!=2:
+    #                                     Over[i1,i2] = overlap[i1+1,i2+1]
+    #                                 elif l1==1 and im1!=2 and l2==1 and im2==2:
+    #                                     Over[i1,i2] = overlap[i1+1,i2-2]
+    #                                 elif l1==1 and im1==2 and l2==1 and im2!=2:
+    #                                     Over[i1,i2] = overlap[i1-2,i2+1]
+    #                                 elif l1==1 and im1==2 and l2==1 and im2==2:
+    #                                     Over[i1,i2] = overlap[i1-2,i2-2]
+    #                                 else:
+    #                                     Over[i1,i2] = overlap[i1,i2]
+    #                                 i2 += 1
+    #                 i1 += 1
 
     # Compute density projections on auxiliary functions
     Proj = np.dot(Over,Coef)
@@ -214,7 +219,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         atoms = [(s, c) for s, c in zip(symb, coords)]
         irreps = sum([df_irreps_by_spe[spe] for spe in symb], Irreps([]))
         dm = np.load(osp.join(inp.qm.path2qm, "density_matrices", f"dm_conf{geom_idx+1}.npy"))
-        reordered_data_old = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)  # for checking consistency
+        # reordered_data_old = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)  # for checking consistency
         # reordered_data = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)
         reordered_data = cal_df_coeffs(atoms, inp.qm.qmbasis, ribasis, dm, irreps)
         assert np.allclose(reordered_data_old["coef"], reordered_data["coef"])  # for checking consistency
