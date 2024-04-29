@@ -16,7 +16,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         inp = ParseConfig().parse_input()
         filename = inp.system.filename
         spelist = inp.system.species
-        if inp.qmcode=="pyscf":
+        if inp.qm.qmcode=="pyscf":
             from salted.pyscf.get_basis_info import get_aux_basis_name
             dfbasis = get_aux_basis_name(inp.qmbasis)
         else:
@@ -27,7 +27,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         raise ValueError("Invalid input, should be either all None or all not None")
 
     # read basis
-    if inp.qmcode=="pyscf":
+    if inp.qm.qmcode=="pyscf":
         from salted.pyscf.get_basis_info import get_aux_basis_name
         [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
     else:
@@ -236,7 +236,7 @@ class ParseConfig:
         ```
         """
         inp = self.parse_input()
-        if inp.qmcode=="pyscf":
+        if inp.qm.qmcode=="pyscf":
             from salted.pyscf.get_basis_info import get_aux_basis_name
             inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         sparsify = False if inp.descriptor.sparsify.ncut == 0 else True

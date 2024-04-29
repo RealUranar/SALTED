@@ -23,7 +23,7 @@ def run_pyscf(
     mol.verbose = verbose
     m = dft.rks.RKS(mol)
     
-    if "r2scan" in xc:
+    if "r2scan" in xc.lower():
         m._numint.libxc = dft.xcfun
     m.grids.radi_method = dft.gauss_chebyshev
     m.grids.level = 0
