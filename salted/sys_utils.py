@@ -18,7 +18,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         spelist = inp.system.species
         if inp.qm.qmcode=="pyscf":
             from salted.pyscf.get_basis_info import get_aux_basis_name
-            dfbasis = get_aux_basis_name(inp.qmbasis)
+            dfbasis = get_aux_basis_name(inp.qm.qmbasis)
         else:
             dfbasis = inp.qm.dfbasis
     elif (filename is not None) and (spelist is not None) and (dfbasis is not None):
@@ -29,7 +29,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
     # read basis
     if inp.qm.qmcode=="pyscf":
         from salted.pyscf.get_basis_info import get_aux_basis_name
-        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qm.qmbasis))
     else:
         [lmax,nmax] = basis.basiset(inp.dfbasis)
     llist = []

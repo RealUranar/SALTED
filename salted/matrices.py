@@ -138,10 +138,10 @@ def matrices(block_idx,trainrange,ntrain,av_coefs,rank):
         start = time.time()
         # load reference QM data
         ref_coefs = np.load(osp.join(
-            saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"
+            saltedpath,inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"
         ))
         over = np.load(osp.join(
-            saltedpath, "overlaps", f"overlap_conf{iconf}.npy"
+            saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
         ))
         psivec = sparse.load_npz(osp.join(
             saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}.npz"

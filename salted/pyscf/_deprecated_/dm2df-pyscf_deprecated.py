@@ -55,13 +55,13 @@ if len(alreadyCalculated) > 0:
 # read basis
 [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
     
-dirpath = os.path.join(inp.system.saltedpath, "coefficients")
+dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "coefficients")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
-dirpath = os.path.join(inp.system.saltedpath, "projections")
+dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "projections")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
-dirpath = os.path.join(inp.system.saltedpath, "overlaps")
+dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "overlaps")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
 
@@ -169,9 +169,9 @@ for iconf in tqdm.tqdm(conf_list):
     Proj = np.dot(Over,Coef)
     
     # Save projections and overlaps
-    np.save(osp.join(inp.system.saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"), Coef)
-    np.save(osp.join(inp.system.saltedpath, "projections", f"projections_conf{iconf}.npy"), Proj)
-    np.save(osp.join(inp.system.saltedpath, "overlaps", f"overlap_conf{iconf}.npy"), Over)
+    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"), Coef)
+    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "projections", f"projections_conf{iconf}.npy"), Proj)
+    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"), Over)
     
     # --------------------------------------------------
     

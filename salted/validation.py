@@ -186,10 +186,10 @@ def build():
 
         # load reference
         ref_coefs = np.load(osp.join(
-            saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"
+            saltedpath,inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"
         ))
         overl = np.load(osp.join(
-            saltedpath, "overlaps", f"overlap_conf{iconf}.npy"
+            saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
         ))
         ref_projs = np.dot(overl,ref_coefs)
         Tsize = len(ref_coefs)
