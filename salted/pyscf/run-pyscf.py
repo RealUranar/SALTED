@@ -56,7 +56,7 @@ def doSCF(i, verbose=0):
     try:
         m.kernel()
     except ValueError:
-        print(f"Error in configuration {i+1}", file = sys.stdout.flush(), flush=True)
+        print(f"\nError in configuration {i+1}", file = sys.stdout.flush(), flush=True)
         return
 
     dm = m.make_rdm1()

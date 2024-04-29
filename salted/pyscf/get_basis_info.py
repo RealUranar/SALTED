@@ -84,7 +84,7 @@ def collect_l_nums(data: List) -> SpeciesBasisData:
         e.g. [[0, [1113.9867719, 1.0]], [1, [102.99176249, 1.0]], ...]
     output: max l number, and a list of counts of each l number
     """
-    l_nums = [d for d, _ in data]  # [0, 0, 0, 0, 1, 1, 1, 2, 2, ...]
+    l_nums = [d for d, *_ in data]  # [0, 0, 0, 0, 1, 1, 1, 2, 2, ...]
     l_max = max(l_nums)
     l_cnt = [0 for _ in range(l_max + 1)]  # [0, 0, 0, ...] to the max l number
     for l_num in l_nums:
