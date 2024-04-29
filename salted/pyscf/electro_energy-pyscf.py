@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 
@@ -7,12 +8,14 @@ from ase.io import read
 from scipy import special
 
 from salted.pyscf.get_basis_info import get_aux_basis_name
-import basis  # WARNING: relative import
-sys.path.insert(0, './')
-import inp
+from salted.sys_utils import ParseConfig
+
+from salted import basis  # WARNING: relative import
+
+inp = ParseConfig().parse_input()
 
 # read species
-spelist = inp.species
+spelist = inp.system.species
 spe_dict = {}
 for i in range(len(spelist)):
     spe_dict[i] = spelist[i]
@@ -31,7 +34,7 @@ llmax = max(llist)
 nnmax = max(nlist)
 
 # read system
-xyzfile = read(inp.filename,":")
+xyzfile = read(inp.system.filename,":")
 ndata = len(xyzfile)
 
 hart2kcal = 627.5096080305927
@@ -107,7 +110,7 @@ for iconf in range(ndata):
     natoms = len(atoms)
     # Load projections and overlaps
     rcoeffs = np.load(os.path.join(
-        inp.path2qm, inp.coefdir, f"coefficients_conf{iconf}.npy"
+        inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"
     ))
     ref_coeffs = np.zeros((natoms,llmax+1,nnmax,2*llmax+1))
     ref_rho = np.zeros(len(rcoeffs))
@@ -134,8 +137,8 @@ for iconf in range(ndata):
         catoms.append([atoms[i],(coord[0],coord[1],coord[2])])
     coords /= bohr2ang
     # basis
-    mol = gto.M(atom=catoms,basis=inp.qmbasis)
-    ribasis = inp.qmbasis+" jkfit" 
+    mol = gto.M(atom=catoms,basis=inp.qm.qmbasis)
+    ribasis = inp.qm.qmbasis+" jkfit" 
     auxmol = gto.M(atom=catoms,basis=ribasis)
     pmol = mol + auxmol
     # RI
