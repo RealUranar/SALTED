@@ -8,7 +8,7 @@ clean:
 LIBDIR = salted/lib 
 dummy_build_folder := $(shell mkdir -p $(LIBDIR))
 
-F2PYEXE=$(shell which f2py3) 
+F2PYEXE=$(shell which f2py) 
 
 FCOMPILER='gfortran' 
 F90FLAGS='-fopenmp' 
