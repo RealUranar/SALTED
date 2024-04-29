@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union, Literal, List
 import numpy as np
 import yaml
 from ase.io import read
-
+from salted.pyscf.get_basis_info import get_aux_basis_name
 from salted import basis
 
 
@@ -17,7 +17,10 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         inp = ParseConfig().parse_input()
         filename = inp.system.filename
         spelist = inp.system.species
-        dfbasis = inp.qm.dfbasis
+        if inp.qmcode=="pyscf":
+            dfbasis = get_aux_basis_name(inp.qmbasis)
+        else:
+            dfbasis = inp.qm.dfbasis
     elif (filename is not None) and (spelist is not None) and (dfbasis is not None):
         pass
     else:
@@ -25,7 +28,6 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
 
     # read basis
     if inp.qmcode=="pyscf":
-        from salted.pyscf.get_basis_info import get_aux_basis_name
         [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
     else:
         [lmax,nmax] = basis.basiset(inp.dfbasis)
@@ -233,6 +235,8 @@ class ParseConfig:
         ```
         """
         inp = self.parse_input()
+        if inp.qmcode=="pyscf":
+            inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         sparsify = False if inp.descriptor.sparsify.ncut == 0 else True
         return (
             inp.salted.saltedname, inp.salted.saltedpath,
@@ -321,7 +325,7 @@ class ParseConfig:
             "qm": {
                 "path2qm": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to the QM calculation outputs
                 "qmcode": (True, None, str, lambda inp, val: val.lower() in ('aims', 'pyscf', 'cp2k')),  # quantum mechanical code
-                "dfbasis": (True, None, str, None),  # density fitting basis
+                "dfbasis": (False, None, str, None),  # density fitting basis, Only not required for PySCF
                 #### below are optional, but required for some qmcode ####
                 "qmbasis": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical basis, only for PySCF
                 "functional": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical functional, only for PySCF
