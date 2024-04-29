@@ -10,21 +10,19 @@ from pyscf import lib
 from salted import basis  # WARNING: relative import
 from salted.pyscf.get_basis_info import get_aux_basis_name
 
-lib.num_threads(10)
-
-sys.path.insert(0, './')
-import inp
+from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
 
 # Initialize geometry
-geoms = read(inp.predict_filename,":")
-conf_list = range(len(geoms))
+inp = ParseConfig().parse_input()
+geoms_all = read(inp.system.filename, ":")
+conf_list = range(len(geoms_all))
 
 # read basis
-[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qm.qmbasis))
 
 
 for iconf in conf_list:
-    geom = geoms[iconf]
+    geom = geoms_all[iconf]
     symb = geom.get_chemical_symbols()
     coords = geom.get_positions()
     natoms = len(coords)
@@ -34,17 +32,17 @@ for iconf in conf_list:
         atoms.append([symb[i],(coord[0],coord[1],coord[2])])
 
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=inp.qmbasis)
+    mol = gto.M(atom=atoms,basis=inp.qm.qmbasis)
     mol.verbose = 2
     mol.max_memory = 10_000
     m = dft.RKS(mol)
-    if "r2scan" in inp.functional.lower():
+    if "r2scan" in inp.qm.functional.lower():
         m._numint.libxc = dft.xcfun
     m.grids.radi_method = dft.gauss_chebyshev
     m.grids.level = 0
     m = m.density_fit()
-    m.with_df.auxbasis = 'def2-tzvp-jkfit'
-    m.xc = inp.functional
+    m.with_df.auxbasis = get_aux_basis_name(inp.qm.qmbasis)
+    m.xc = inp.qm.functional
     # Save density matrix
     m.kernel()
 

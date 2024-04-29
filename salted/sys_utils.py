@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union, Literal, List
 import numpy as np
 import yaml
 from ase.io import read
-from salted.pyscf.get_basis_info import get_aux_basis_name
 from salted import basis
 
 
@@ -18,6 +17,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         filename = inp.system.filename
         spelist = inp.system.species
         if inp.qmcode=="pyscf":
+            from salted.pyscf.get_basis_info import get_aux_basis_name
             dfbasis = get_aux_basis_name(inp.qmbasis)
         else:
             dfbasis = inp.qm.dfbasis
@@ -28,6 +28,7 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
 
     # read basis
     if inp.qmcode=="pyscf":
+        from salted.pyscf.get_basis_info import get_aux_basis_name
         [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
     else:
         [lmax,nmax] = basis.basiset(inp.dfbasis)
@@ -236,6 +237,7 @@ class ParseConfig:
         """
         inp = self.parse_input()
         if inp.qmcode=="pyscf":
+            from salted.pyscf.get_basis_info import get_aux_basis_name
             inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         sparsify = False if inp.descriptor.sparsify.ncut == 0 else True
         return (
