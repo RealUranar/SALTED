@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 from ase.io import read
-from pyscf import gto, dft, lib
+from pyscf import gto, dft, lib, df
 
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
 
@@ -16,11 +16,26 @@ def run_pyscf(
     atoms: List,
     basis: str,
     xc: str,
+    verbose: int = 0,
 ):
-    mol = gto.M(atom=atoms, basis=basis, verbose=0)
-    mf = dft.RKS(mol, xc=xc)
-    mf.kernel()
-    return mf.make_rdm1()
+    # Get PySCF objects for wave-function and density-fitted basis
+    mol = gto.M(atom=atoms,basis=basis, unit='angstrom', max_memory=12000)
+    mol.verbose = verbose
+    m = dft.rks.RKS(mol)
+    
+    if "r2scan" in xc:
+        m._numint.libxc = dft.xcfun
+    m.grids.radi_method = dft.gauss_chebyshev
+    m.grids.level = 0
+    m = m.density_fit()
+    m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(basis)][0]
+    m.xc = xc
+    try:
+        m.kernel()
+    except ValueError:
+        print(f"\nError in configuration", file = sys.stdout.flush(), flush=True)
+        return
+    return m.make_rdm1()
 
 
 def main(geom_indexes: Union[List[int], None], num_threads: int = None):
