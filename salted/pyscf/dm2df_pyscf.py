@@ -55,7 +55,6 @@ def cal_df_coeffs_old(
     Over = np.zeros((len(rho), len(rho)))
 
     symb = [at[0] for at in atoms]
-    print(symb)
 
     Coef, Over = dm2df.reorder(rho, overlap, symb, lmax, nmax)
     # i1 = 0
@@ -194,7 +193,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
 
     """ prepare directories to store data """
     for data_dname in ("coefficients", "projections", "overlaps"):
-        if not osp.exists(dpath := osp.join(inp.qm.path2qm,inp.qm.path2qm, data_dname)):
+        if not osp.exists(dpath := osp.join(inp.qm.path2qm, data_dname)):
             os.mkdir(dpath)
 
     """ set pyscf.lib.num_threads """
@@ -219,7 +218,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         atoms = [(s, c) for s, c in zip(symb, coords)]
         irreps = sum([df_irreps_by_spe[spe] for spe in symb], Irreps([]))
         dm = np.load(osp.join(inp.qm.path2qm, "density_matrices", f"dm_conf{geom_idx+1}.npy"))
-        # reordered_data_old = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)  # for checking consistency
+        reordered_data_old = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)  # for checking consistency
         # reordered_data = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)
         reordered_data = cal_df_coeffs(atoms, inp.qm.qmbasis, ribasis, dm, irreps)
         assert np.allclose(reordered_data_old["coef"], reordered_data["coef"])  # for checking consistency
