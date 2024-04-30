@@ -170,7 +170,7 @@ def build():
         structure = frames[iconf]
 
         # load reference QM data to total array size
-        coefs = np.load(osp.join(saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"))
+        coefs = np.load(osp.join(saltedpath, path2qm, "coefficients", f"coefficients_conf{iconf}.npy"))
         Tsize = len(coefs)
 
         if rep1=="rho":

@@ -58,7 +58,7 @@ def build():
         # load average density coefficients
         av_coefs = {}
         for spe in species:
-            av_coefs[spe] = np.load(os.path.join(saltedpath, "coefficients", "averages", f"averages_{spe}.npy"))
+            av_coefs[spe] = np.load(os.path.join(saltedpath, "averages", f"averages_{spe}.npy"))
 
     dirpath = os.path.join(saltedpath, rdir, f"M{Menv}_zeta{zeta}")
     if rank==0:
@@ -69,7 +69,8 @@ def build():
     # define training set at random
     if (Ntrain > ndata):
         if rank == 0:
-            raise ValueError(f"More training structures {Ntrain=} have been requested than are present in the input data {ndata=}.")
+            print(f"WARNING!!!!\nMore training structures {Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
+            Ntrain = ndata
         else:
             exit()
     dataset = list(range(ndata))
@@ -116,10 +117,10 @@ def build():
 
             # load reference QM data
             ref_projs = np.load(osp.join(
-                saltedpath, "projections",inp.qm.path2qm, f"projections_conf{trainrange[iconf]}.npy"
+                saltedpath, inp.qm.path2qm, "projections", f"projections_conf{trainrange[iconf]}.npy"
             ))
             ref_coefs = np.load(osp.join(
-                saltedpath, "coefficients",inp.qm.path2qm, f"coefficients_conf{trainrange[iconf]}.npy"
+                saltedpath, inp.qm.path2qm, "coefficients", f"coefficients_conf{trainrange[iconf]}.npy"
             ))
 
             if average:
@@ -169,10 +170,10 @@ def build():
 
             # load reference QM data
             ref_projs = np.load(osp.join(
-                saltedpath, "projections",inp.qm.path2qm, f"projections_conf{trainrange[iconf]}.npy"
+                saltedpath, inp.qm.path2qm, "projections", f"projections_conf{trainrange[iconf]}.npy"
             ))
             ref_coefs = np.load(osp.join(
-                saltedpath, "coefficients",inp.qm.path2qm, f"coefficients_conf{trainrange[iconf]}.npy"
+                saltedpath, inp.qm.path2qm, "coefficients", f"coefficients_conf{trainrange[iconf]}.npy"
             ))
 
             if average:
@@ -241,7 +242,7 @@ def build():
     psi_list = []
     for iconf in trainrange:
         ovlp_list.append(np.load(osp.join(
-            saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
+            saltedpath, inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
         )))
         # load feature vector as a scipy sparse object
         psi_list.append(sparse.load_npz(osp.join(

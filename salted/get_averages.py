@@ -32,13 +32,13 @@ def build():
                            avcoefs[spe][n] += coefs[i]
                         i += 1
 
-    adir = os.path.join(inp.salted.saltedpath,inp.qm.path2qm, "coefficients", "averages")
+    adir = os.path.join(inp.salted.saltedpath,"averages")
     if not osp.exists(adir):
         os.mkdir(adir)
 
     for spe in spelist:
         avcoefs[spe] /= nat_per_species[spe]
-        np.save(os.path.join(inp.salted.saltedpath,inp.qm.path2qm, "coefficients", "averages", f"averages_{spe}.npy"), avcoefs[spe])
+        np.save(os.path.join(inp.salted.saltedpath, "averages", f"averages_{spe}.npy"), avcoefs[spe])
 
     return
 

@@ -5,11 +5,9 @@ import os.path as osp
 import numpy as np
 from ase.io import read
 from pyscf import gto
-from pyscf import scf,dft
-from pyscf import lib
 from salted import basis  # WARNING: relative import
 from salted.pyscf.get_basis_info import get_aux_basis_name
-
+from salted.pyscf.run_pyscf import run_pyscf
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
 
 # Initialize geometry
@@ -32,23 +30,10 @@ for iconf in conf_list:
         atoms.append([symb[i],(coord[0],coord[1],coord[2])])
 
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=inp.qm.qmbasis)
-    mol.verbose = 2
-    mol.max_memory = 10_000
-    m = dft.RKS(mol)
-    if "r2scan" in inp.qm.functional.lower():
-        m._numint.libxc = dft.xcfun
-    m.grids.radi_method = dft.gauss_chebyshev
-    m.grids.level = 0
-    m = m.density_fit()
-    m.with_df.auxbasis = get_aux_basis_name(inp.qm.qmbasis)
-    m.xc = inp.qm.functional
-    # Save density matrix
-    m.kernel()
-
-    dm = m.make_rdm1()
-
-    ribasis = inp.qmbasis+" jkfit"
+    dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, verbose=4)
+    
+    mol = gto.M(atom=atoms,basis=inp.qm.qmbasis, unit='angstrom', max_memory=12000)
+    ribasis = get_aux_basis_name(inp.qm.qmbasis)
     auxmol = gto.M(atom=atoms,basis=ribasis)
     pmol = mol + auxmol
     

@@ -155,7 +155,7 @@ def build():
     if average:
         av_coefs = {}
         for spe in species:
-            av_coefs[spe] = np.load(os.path.join(saltedpath, "coefficients", "averages", f"averages_{spe}.npy"))
+            av_coefs[spe] = np.load(os.path.join(saltedpath, "averages", f"averages_{spe}.npy"))
 
     # compute error over test set
 
