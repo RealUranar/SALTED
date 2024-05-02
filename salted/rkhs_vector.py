@@ -144,7 +144,7 @@ def build():
                 cuml_Mcut[(spe,lam,n)] = totsize
                 totsize += Vmat[(lam,spe)].shape[1]
 
-    if rank == 0: print(f"problem dimensionality: {totsize}", flush=True)
+    if rank == 0: print(f"problem dimensionality: {totsize}", file=sys.stdout, flush=True)
 
     if (rank == 0):
         dirpath = os.path.join(saltedpath, fdir, f"M{Menv}_zeta{zeta}")
@@ -156,7 +156,7 @@ def build():
     if parallel:
         conf_range = get_conf_range(rank,size,ndata,list(range(ndata)))
         conf_range = comm.scatter(conf_range,root=0)
-        print('Task',rank+1,'handles the following structures:',conf_range,flush=True)
+        print('Task',rank+1,'handles the following structures:',conf_range, file=sys.stdout, flush=True)
     else:
         conf_range = range(ndata)
 
@@ -165,7 +165,7 @@ def build():
     for iconf in conf_range:
 
         start_time = time.time()
-        print(f"{iconf} start", flush=True)
+        print(f"{iconf} start", file=sys.stdout, flush=True)
 
         structure = frames[iconf]
 

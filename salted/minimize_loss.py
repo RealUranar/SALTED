@@ -252,7 +252,7 @@ def build():
     totsize = psi_list[0].shape[1]
     norm = 1.0 / float(ntraintot)
 
-    if rank == 0:  print(f"problem dimensionality: {totsize}")
+    if rank == 0:  print(f"problem dimensionality: {totsize}" ,file=sys.stdout, flush=True)
 
     start = time.time()
 
@@ -284,7 +284,7 @@ def build():
         d = np.multiply(P,r)
         delnew = np.dot(r,d)
 
-    if rank == 0: print("minimizing...")
+    if rank == 0: print("minimizing...", file=sys.stdout, flush=True)
     for i in range(100000):
         Ad = curv_func(d,ovlp_list,psi_list)
         if parallel:
@@ -308,7 +308,7 @@ def build():
         r -= alpha * Ad
         if rank == 0:
             # np.sqrt(np.sum((r**2))) == np.linalg.norm(r)
-            print(f"step {i+1}, gradient norm: {np.linalg.norm(r):.3e}", flush=True)
+            print(f"step {i+1}, gradient norm: {np.linalg.norm(r):.3e}", file=sys.stdout, flush=True)
         if np.linalg.norm(r) < gradtol:
             break
         else:

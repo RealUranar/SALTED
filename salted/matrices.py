@@ -124,7 +124,7 @@ def matrices(block_idx,trainrange,ntrain,av_coefs,rank):
         saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf0.npz"
     ))
     totsize = p.shape[-1]
-    if rank == 0: print("problem dimensionality:", totsize,flush=True)
+    if rank == 0: print("problem dimensionality:", totsize,file=sys.stdout, flush=True)
     if totsize>70000:
         raise ValueError(f"problem dimension too large ({totsize=}), minimize directly loss-function instead!")
     
