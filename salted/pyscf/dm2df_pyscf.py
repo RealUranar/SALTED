@@ -199,9 +199,9 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     """See if any structures already exist, if they do, do not compute again."""
     alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dpath}/*")], dtype=int).flatten()
     if len(alreadyCalculated) > 0:
-        print("Found existing calculations, resuming from bevore")
+        print("Found existing calculations, resuming from bevore", file=sys.stdout, flush=True)
         geom_indexes = np.setdiff1d(np.array(geom_indexes), alreadyCalculated)
-    print(f"Calculate density fitting coefficients for these structures: {geom_indexes}")
+    print(f"Calculate density fitting coefficients for these structures: {geom_indexes}", file=sys.stdout, flush=True)
 
     """ set pyscf.lib.num_threads """
     if num_threads is not None:
@@ -219,7 +219,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     pyscf_time, reorder_time = 0.0, 0.0
     start_time = time.time()
     for cal_idx, (geom_idx, geom) in enumerate(zip(geom_indexes, geoms)):
-        print(f"calculate {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}")
+        print(f"calculate {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}", file=sys.stdout, flush=True)
         symb = geom.get_chemical_symbols()
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]

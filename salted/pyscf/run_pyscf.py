@@ -35,7 +35,7 @@ def run_pyscf(
     try:
         m.kernel()
     except ValueError:
-        print(f"\nError in configuration", file = sys.stdout.flush(), flush=True)
+        print(f"\nError in configuration", file = sys.stdout, flush=True)
         return
     return m.make_rdm1()
 
@@ -57,9 +57,9 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     """See if any structures already exist, if they do, do not compute again."""
     alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()
     if len(alreadyCalculated) > 0:
-        print("Found existing calculations, resuming from bevore")
+        print("Found existing calculations, resuming from bevore", file=sys.stdout, flush=True)
         geom_indexes = np.setdiff1d(np.array(geom_indexes), alreadyCalculated)
-    print(f"Calculating density matrix for configurations: {geom_indexes}")
+    print(f"Calculating density matrix for configurations: {geom_indexes}", file=sys.stdout, flush=True)
 
     """ set pyscf.lib.num_threads """
     if num_threads is not None:
@@ -69,7 +69,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     verbose = 4 if len(geom_indexes) == 1 else 0
     start_time = time.time()
     for cal_idx, (geom_idx, geom) in enumerate(zip(geom_indexes, geoms)):
-        print(f"calcualte {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}")
+        print(f"calcualte {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}", file = sys.stdout, flush=True)
         geom.translate(-geom.get_center_of_mass())
         symb = geom.get_chemical_symbols()
         coords = geom.get_positions()
