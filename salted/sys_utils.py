@@ -450,7 +450,9 @@ def check_path_exists(path:str) -> bool:
     if path == PLACEHOLDER:
         return True
     else:
-        return os.path.exists(path)
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+        return True
 
 
 
