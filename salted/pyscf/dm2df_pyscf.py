@@ -12,7 +12,6 @@ from pyscf.gto import basis
 from ase.io import read
 from scipy import special
 
-import salted.cython.dm2df_fast_reorder as dm2df
 from salted.basis_client import BasisClient, SpeciesBasisData
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps
 from salted.pyscf.get_basis_info import get_aux_basis_name
@@ -57,7 +56,7 @@ def cal_df_coeffs_old(
     Over = np.zeros((len(rho), len(rho)))
 
     symb = [at[0] for at in atoms]
-
+    import salted.cython.dm2df_fast_reorder as dm2df
     Coef, Over = dm2df.reorder(rho, overlap, symb, lmax, nmax)
     # i1 = 0
     # for iat in range(len(atoms)):

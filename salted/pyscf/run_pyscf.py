@@ -66,14 +66,16 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         lib.num_threads(num_threads)
 
     """ do DFT calculation """
+    verbose = 4 if len(geom_indexes) == 1 else 0
     start_time = time.time()
     for cal_idx, (geom_idx, geom) in enumerate(zip(geom_indexes, geoms)):
         print(f"calcualte {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}")
+        geom.translate(-geom.get_center_of_mass())
         symb = geom.get_chemical_symbols()
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]
 
-        dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional)
+        dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, verbose=verbose)
         np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
     print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")
