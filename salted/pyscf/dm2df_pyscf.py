@@ -15,6 +15,7 @@ from scipy import special
 import salted.cython.dm2df_fast_reorder as dm2df
 from salted.basis_client import BasisClient, SpeciesBasisData
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps
+from salted.pyscf.get_basis_info import get_aux_basis_name
 
 
 __doc__ = """
@@ -207,9 +208,9 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     if num_threads is not None:
         lib.num_threads(num_threads)
 
-    lmax, nmax = BasisClient().read_as_old_format(inp.qm.dfbasis)
-    ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qm.qmbasis)][0]  # RI basis name in pyscf
-    basis_data = BasisClient().read(inp.qm.dfbasis)
+    lmax, nmax = BasisClient().read_as_old_format(get_aux_basis_name(inp.qm.qmbasis))
+    ribasis = get_aux_basis_name(inp.qm.qmbasis)  # RI basis name in pyscf
+    basis_data = BasisClient().read(get_aux_basis_name(inp.qm.qmbasis))
     df_irreps_by_spe = {
         spe: Irreps(tuple((cnt, lam) for lam, cnt in enumerate(spe_basis_data["nmax"])))
         for spe, spe_basis_data in basis_data.items()
