@@ -327,7 +327,7 @@ class ParseConfig:
             "qm": {
                 "path2qm": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to the QM calculation outputs
                 "qmcode": (True, None, str, lambda inp, val: val.lower() in ('aims', 'pyscf', 'cp2k')),  # quantum mechanical code
-                "dfbasis": (False, PLACEHOLDER, str, lambda inp, val: not entry_with_qmcode(inp, val, "pyscf")),  # density fitting basis, Only not required for PySCF
+                "dfbasis": (False, PLACEHOLDER, str, None),  # density fitting basis, Only not required for PySCF
                 #### below are optional, but required for some qmcode ####
                 "qmbasis": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical basis, only for PySCF
                 "functional": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical functional, only for PySCF
