@@ -225,7 +225,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]
         irreps = sum([df_irreps_by_spe[spe] for spe in symb], Irreps([]))
-        dm = np.load(osp.join(inp.qm.path2qm, "density_matrices", f"dm_conf{geom_idx+1}.npy"))
+        dm = np.load(osp.join(inp.qm.path2qm, "density_matrices", f"dm_conf{geom_idx}.npy"))
         reordered_data = cal_df_coeffs(atoms, inp.qm.qmbasis, ribasis, dm, irreps)
         
         """Uncomment if testing consistency with old code is needed."""

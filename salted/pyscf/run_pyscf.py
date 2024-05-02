@@ -55,7 +55,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         os.mkdir(dirpath)
     
     """See if any structures already exist, if they do, do not compute again."""
-    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()-1
+    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()
     if len(alreadyCalculated) > 0:
         print("Found existing calculations, resuming from bevore")
         geom_indexes = np.setdiff1d(np.array(geom_indexes), alreadyCalculated)
@@ -74,7 +74,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         atoms = [(s, c) for s, c in zip(symb, coords)]
 
         dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional)
-        np.save(os.path.join(dirpath, f"dm_conf{geom_idx+1}.npy"), dm)
+        np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
     print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")
 
