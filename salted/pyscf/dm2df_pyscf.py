@@ -4,6 +4,7 @@ import sys
 import os.path as osp
 from typing import List, Tuple, Union, Dict
 import time
+import re, glob
 
 import numpy as np
 from pyscf import gto, df, lib
@@ -188,13 +189,19 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         geom_indexes = list(range(len(geoms_all)))
     else:
         geom_indexes = [i for i in geom_indexes if i < len(geoms_all)]  # indexes start from 0
-    print(f"Calculate density fitting coefficients for these structures: {geom_indexes}")
     geoms = [geoms_all[i] for i in geom_indexes]
 
     """ prepare directories to store data """
     for data_dname in ("coefficients", "projections", "overlaps"):
         if not osp.exists(dpath := osp.join(inp.qm.path2qm, data_dname)):
             os.mkdir(dpath)
+
+    """See if any structures already exist, if they do, do not compute again."""
+    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dpath}/*")], dtype=int).flatten()
+    if len(alreadyCalculated) > 0:
+        print("Found existing calculations, resuming from bevore")
+        geom_indexes = np.setdiff1d(np.array(geom_indexes), alreadyCalculated)
+    print(f"Calculate density fitting coefficients for these structures: {geom_indexes}")
 
     """ set pyscf.lib.num_threads """
     if num_threads is not None:

@@ -327,7 +327,7 @@ class ParseConfig:
             "qm": {
                 "path2qm": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to the QM calculation outputs
                 "qmcode": (True, None, str, lambda inp, val: val.lower() in ('aims', 'pyscf', 'cp2k')),  # quantum mechanical code
-                "dfbasis": (False, None, str, None),  # density fitting basis, Only not required for PySCF
+                "dfbasis": (False, PLACEHOLDER, str, lambda inp, val: not entry_with_qmcode(inp, val, "pyscf")),  # density fitting basis, Only not required for PySCF
                 #### below are optional, but required for some qmcode ####
                 "qmbasis": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical basis, only for PySCF
                 "functional": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "pyscf")),  # quantum mechanical functional, only for PySCF
@@ -337,7 +337,7 @@ class ParseConfig:
                 "periodic": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "cp2k")),  # periodic boundary conditions, only for CP2K
             },
             "prediction": {
-                "filename": (False, PLACEHOLDER, str, lambda inp, val: check_path_exists(val)),  # path to the prediction file
+                "filename": (False, PLACEHOLDER, str, None),  # path to the prediction file
                 "predname": (False, PLACEHOLDER, str, None),  # SALTED prediction identifier
                 #### below are optional, but required for some qmcode ####
                 "predict_data": (False, PLACEHOLDER, str, lambda inp, val: entry_with_qmcode(inp, val, "aims")),  # path to the prediction data by QM code, only for AIMS

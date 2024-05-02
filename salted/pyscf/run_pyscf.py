@@ -4,6 +4,8 @@ import sys
 from typing import List, Tuple, Union
 import time
 
+import re, glob
+
 import numpy as np
 from ase.io import read
 from pyscf import gto, dft, lib, df
@@ -45,13 +47,19 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         geom_indexes = list(range(len(geoms_all)))
     else:
         geom_indexes = [i for i in geom_indexes if i < len(geoms_all)]  # indexes start from 0
-    print(f"Calculating density matrix for configurations: {geom_indexes}")
     geoms = [geoms_all[i] for i in geom_indexes]
 
     """ prepare the output directory """
     dirpath = os.path.join(inp.qm.path2qm, "density_matrices")
     if not os.path.exists(dirpath):
         os.mkdir(dirpath)
+    
+    """See if any structures already exist, if they do, do not compute again."""
+    alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{dirpath}/*.npy")], dtype=int).flatten()-1
+    if len(alreadyCalculated) > 0:
+        print("Found existing calculations, resuming from bevore")
+        geom_indexes = np.setdiff1d(np.array(geom_indexes), alreadyCalculated)
+    print(f"Calculating density matrix for configurations: {geom_indexes}")
 
     """ set pyscf.lib.num_threads """
     if num_threads is not None:
