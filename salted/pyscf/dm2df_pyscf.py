@@ -187,6 +187,8 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     geoms_all = read(inp.system.filename, ":")
     if geom_indexes is None:
         geom_indexes = list(range(len(geoms_all)))
+    elif len(geom_indexes) == 1:
+        geom_indexes = np.loadtxt(os.path.join(inp.salted.saltedpath,"missing_indexes.txt"),dtype=int)[geom_indexes]
     else:
         geom_indexes = [i for i in geom_indexes if i < len(geoms_all)]  # indexes start from 0
     geoms = [geoms_all[i] for i in geom_indexes]
