@@ -48,7 +48,7 @@ def build():
 
     species, lmax, nmax, llmax, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
 
-    atom_per_spe, natoms_per_spe = get_atom_idx(ndata,natoms,species,atomic_symbols)
+    # atom_per_spe, natoms_per_spe = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
     # load average density coefficients if needed
     if average:
@@ -68,11 +68,9 @@ def build():
 
     # define training set at random
     if (Ntrain > ndata):
-        if rank == 0:
-            print(f"WARNING!!!!\nMore training structures {Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
-            Ntrain = ndata
-        else:
-            exit()
+        if rank == 0: print(f"WARNING!!!!\nMore training structures {Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
+        Ntrain = ndata
+
     dataset = list(range(ndata))
     random.Random(3).shuffle(dataset)
     trainrangetot = dataset[:Ntrain]

@@ -5,14 +5,13 @@ import os.path as osp
 
 import numpy as np
 
-from salted.sys_utils import ParseConfig
-
+from salted.sys_utils import ParseConfig, read_system
 
 def build():
 
     inp = ParseConfig().parse_input()
     saltedname, saltedpath = inp.salted.saltedname, inp.salted.saltedpath
-    
+    species, lmax, nmax, llmax, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     # sparse-GPR parameters
     Menv = inp.gpr.Menv
     regul = inp.gpr.regul
@@ -27,6 +26,12 @@ def build():
         fdir = f"rkhs-vectors_{saltedname}"
         rdir = f"regrdir_{saltedname}"
     
+    
+    # If Ntrain is too big, set it to the total number of structures
+    if (inp.gpr.Ntrain > ndata):
+        print(f"WARNING!!!!\nMore training structures {inp.gpr.Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
+        inp.gpr.Ntrain = ndata
+        
     # define training set size 
     ntrain = round(inp.gpr.trainfrac*inp.gpr.Ntrain)
     
