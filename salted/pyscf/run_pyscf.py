@@ -47,6 +47,8 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         geom_indexes = list(range(len(geoms_all)))
     elif len(geom_indexes) == 1:
         geom_indexes = np.loadtxt(os.path.join(inp.salted.saltedpath,"missing_indexes.txt"),dtype=int)[geom_indexes]
+        if type(geom_indexes) != np.ndarray and type(geom_indexes) != list:
+            geom_indexes = [geom_indexes]
     else:
         geom_indexes = [i for i in geom_indexes if i < len(geoms_all)]  # indexes start from 0
     geoms = [geoms_all[i] for i in geom_indexes]
