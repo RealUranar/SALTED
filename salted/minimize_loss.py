@@ -66,11 +66,16 @@ def build():
             os.makedirs(dirpath)
     if size > 1: comm.Barrier()
 
-    # define training set at random
+    # check if Ntrain is larger than ndata and adjust if necessary
     if (Ntrain > ndata):
-        if rank == 0: print(f"WARNING!!!!\nMore training structures {Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
-        Ntrain = ndata
-
+        if rank == 0:
+            raise ValueError(
+                f"More training structures {Ntrain=} have been requested "
+                f"than are present in the input data {ndata=}."
+            )
+        else:
+            exit()
+    # define training set at random
     dataset = list(range(ndata))
     random.Random(3).shuffle(dataset)
     trainrangetot = dataset[:Ntrain]

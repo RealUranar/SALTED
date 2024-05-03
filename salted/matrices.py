@@ -55,11 +55,6 @@ def build():
 
     if size > 1: comm.Barrier()
 
-    # If Ntrain is too big, set it to the total number of structures
-    if (inp.gpr.Ntrain > ndata):
-        if rank == 0: print(f"WARNING!!!!\nMore training structures {inp.gpr.Ntrain=} have been requested than are present in the input data {ndata=}.\nSetting Ntrain to ndata.... make sure this is correct!!!")
-        inp.gpr.Ntrain = ndata
-
     # define training set at random or sequentially
     dataset = list(range(ndata))
     if inp.gpr.trainsel=="sequential":
