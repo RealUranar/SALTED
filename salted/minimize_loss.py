@@ -4,16 +4,17 @@ TODO:
 """
 
 import os
+import os.path as osp
 import random
 import sys
 import time
-import os.path as osp
 
 import numpy as np
 from scipy import sparse
 
 from salted import get_averages
-from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range
+from salted.sys_utils import ParseConfig, get_atom_idx, get_conf_range, read_system
+
 
 def build():
 
@@ -48,7 +49,7 @@ def build():
 
     species, lmax, nmax, llmax, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
 
-    # atom_per_spe, natoms_per_spe = get_atom_idx(ndata,natoms,species,atomic_symbols)
+    atom_per_spe, natoms_per_spe = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
     # load average density coefficients if needed
     if average:
@@ -66,7 +67,7 @@ def build():
             os.makedirs(dirpath)
     if size > 1: comm.Barrier()
 
-    # check if Ntrain is larger than ndata and adjust if necessary
+    # define training set at random
     if (Ntrain > ndata):
         if rank == 0:
             raise ValueError(
@@ -75,7 +76,6 @@ def build():
             )
         else:
             exit()
-    # define training set at random
     dataset = list(range(ndata))
     random.Random(3).shuffle(dataset)
     trainrangetot = dataset[:Ntrain]
@@ -91,7 +91,10 @@ def build():
     if parallel:
         if ntraintot < size:
             if rank == 0:
-                raise ValueError(f"More processes {size=} have been requested than training structures {ntraintot=}. Please reduce the number of processes.")
+                raise ValueError(
+                    f"More processes {size=} have been requested than training structures {ntraintot=}. "
+                    f"Please reduce the number of processes."
+                )
             else:
                 exit()
         # if rank == 0 and ntraintot < size:
@@ -255,7 +258,7 @@ def build():
     totsize = psi_list[0].shape[1]
     norm = 1.0 / float(ntraintot)
 
-    if rank == 0:  print(f"problem dimensionality: {totsize}" ,file=sys.stdout, flush=True)
+    if rank == 0:  print(f"problem dimensionality: {totsize}")
 
     start = time.time()
 

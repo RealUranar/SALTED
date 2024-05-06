@@ -1,7 +1,3 @@
-"""
-TODO: replace class arraylist by numpy.concatenate
-"""
-
 import os
 import sys
 import time
@@ -156,10 +152,6 @@ def build():
         print(f"{iconf} start", flush=True)
 
         structure = frames[iconf]
-
-        # load reference QM data to total array size
-        coefs = np.load(osp.join(saltedpath, inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"))
-        Tsize = len(coefs)
 
         if rep1=="rho":
             # get SPH expansion for atomic density

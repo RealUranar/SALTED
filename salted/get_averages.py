@@ -1,7 +1,7 @@
 import os
-import os.path as osp
 import sys
 import numpy as np
+import os.path as osp
 
 from salted.sys_utils import ParseConfig, read_system
 
