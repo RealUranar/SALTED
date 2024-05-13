@@ -27,9 +27,9 @@ def build():
     # read basis
     if inp.qmcode=="pyscf":
         from salted.pyscf.get_basis_info import get_aux_basis_name
-        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qm.qmbasis))
     else:
-        [lmax,nmax] = basis.basiset(inp.dfbasis)
+        [lmax,nmax] = basis.basiset(inp.qm.dfbasis)
 
     llist = []
     nlist = []
