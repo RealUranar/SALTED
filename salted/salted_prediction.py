@@ -159,7 +159,7 @@ def build(lmax,nmax,lmax_max,weights,power_env_sparse,Mspe,Vmat,vfps,charge_inte
     pvec = {}
     for lam in range(lmax_max+1):
     
-#        print("lambda =", lam)
+        print("lambda =", lam)
     
         equistart = time.time()
     

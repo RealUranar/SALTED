@@ -74,6 +74,7 @@ do iat=1,natoms
    inner = 0.0
    ptemp = 0.0
    ifeat = 1
+   print *, "Atom: ", iat
    do n1=1,nrad1
       do n2=1,nrad2 
          iwig = 1
