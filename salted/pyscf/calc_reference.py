@@ -12,7 +12,7 @@ from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
 
 # Initialize geometry
 inp = ParseConfig().parse_input()
-geoms_all = read(inp.system.filename, ":")
+geoms_all = read(inp.prediction.filename, ":")
 conf_list = range(len(geoms_all))
 
 # read basis
@@ -72,7 +72,7 @@ for iconf in conf_list:
     if not osp.exists("reference"):
         os.mkdir("reference")
     # Save Coefficents
-    np.save(osp.join("reference/", f'{inp.predict_filename.removesuffix(".xyz")}_{iconf}.npy'), Coef)
+    np.save(osp.join("reference/", f'{inp.prediction.predname.removesuffix(".xyz")}_{iconf}.npy'), Coef)
    
     
     # --------------------------------------------------
