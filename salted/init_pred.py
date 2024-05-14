@@ -25,7 +25,7 @@ def build():
     sparsify = True if inp.descriptor.sparsify.ncut > 0 else False
   
     # read basis
-    if inp.qmcode=="pyscf":
+    if inp.qm.qmcode=="pyscf":
         from salted.pyscf.get_basis_info import get_aux_basis_name
         [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qm.qmbasis))
     else:

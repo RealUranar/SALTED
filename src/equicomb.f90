@@ -34,15 +34,35 @@ p = 0.d0
 if(natoms .le. 0) then
    print*, "Error: Number of atoms must be greater than zero."
    stop
+else
+   print*, "Number of atoms: ", natoms
 endif
+
 if(size(v1, dim=3) .lt. nrad1) then
    print*, "Error: Number of radial functions must be greater than limit nrad1."
    stop
+else
+   print*, "Number of radial functions 1: ", nrad1
 endif
 if(size(v2, dim=3) .lt. nrad2) then
    print*, "Error: Number of radial functions must be greater than limit nrad2."
    stop
+else
+   print*, "Number of radial functions 2: ", nrad2
 endif
+if(size(v1, dim=2) .lt. max(llvec(1,:))+1) then
+   print*, "Error: Number of angular functions must be greater than limit nang1."
+   stop
+else
+   print*, "Number of angular functions 1: ", nang1
+endif
+if(size(v2, dim=2) .lt. max(llvec(2,:))+1) then
+   print*, "Error: Number of angular functions must be greater than limit nang1."
+   stop
+else
+   print*, "Number of angular functions 2: ", nang2
+endif
+
 
 !$OMP PARALLEL DEFAULT(private) &
 !$OMP FIRSTPRIVATE(natoms,nang1,nang2,nrad1,nrad2,w3j,llmax,llvec,lam,c2r,featsize) &
