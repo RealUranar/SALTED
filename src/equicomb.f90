@@ -31,39 +31,39 @@ REAL*8:: inner, normfact
 
 p = 0.d0
 
-if(natoms .le. 0) then
-   print*, "Error: Number of atoms must be greater than zero."
-   stop
-else
-   print*, "Number of atoms: ", natoms
-endif
+! if(natoms .le. 0) then
+!    print*, "Error: Number of atoms must be greater than zero."
+!    stop
+! else
+!    print*, "Number of atoms: ", natoms
+! endif
 
-if(size(v1, dim=3) .lt. nrad1) then
-   print*, "Error: Number of radial functions must be greater than limit nrad1."
-   stop
-else
-   print*, "Number of radial functions 1: ", nrad1
-endif
-if(size(v2, dim=3) .lt. nrad2) then
-   print*, "Error: Number of radial functions must be greater than limit nrad2."
-   stop
-else
-   print*, "Number of radial functions 2: ", nrad2
-endif
-temp1 = maxval(llvec(1,:))
-if(size(v1, dim=2) .lt. temp1+1) then
-   print*, "Error: Number of angular functions must be greater than limit nang1."
-   stop
-else
-   print*, "Number of angular functions 1: ", nang1
-endif
-temp2 = maxval(llvec(2,:))
-if(size(v2, dim=2) .lt. temp2+1) then
-   print*, "Error: Number of angular functions must be greater than limit nang1."
-   stop
-else
-   print*, "Number of angular functions 2: ", nang2
-endif
+! if(size(v1, dim=3) .lt. nrad1) then
+!    print*, "Error: Number of radial functions must be greater than limit nrad1."
+!    stop
+! else
+!    print*, "Number of radial functions 1: ", nrad1
+! endif
+! if(size(v2, dim=3) .lt. nrad2) then
+!    print*, "Error: Number of radial functions must be greater than limit nrad2."
+!    stop
+! else
+!    print*, "Number of radial functions 2: ", nrad2
+! endif
+! temp1 = maxval(llvec(1,:))
+! if(size(v1, dim=2) .lt. temp1+1) then
+!    print*, "Error: Number of angular functions must be greater than limit nang1."
+!    stop
+! else
+!    print*, "Number of angular functions 1: ", nang1
+! endif
+! temp2 = maxval(llvec(2,:))
+! if(size(v2, dim=2) .lt. temp2+1) then
+!    print*, "Error: Number of angular functions must be greater than limit nang1."
+!    stop
+! else
+!    print*, "Number of angular functions 2: ", nang2
+! endif
 
 
 !$OMP PARALLEL DEFAULT(private) &
@@ -74,7 +74,6 @@ do iat=1,natoms
    inner = 0.0
    ptemp = 0.0
    ifeat = 1
-   print *, "Atom: ", iat
    do n1=1,nrad1
       do n2=1,nrad2 
          iwig = 1
