@@ -4,7 +4,7 @@ SUBROUTINE equicomb(natoms,nang1,nang2,nrad1,nrad2,v1,v2,&
 !use omp_lib
 IMPLICIT NONE
 INTEGER:: natoms,nang1,nang2,nrad1,nrad2,llmax,lam,wigdim,ifeat
-INTEGER:: iat,n1,n2,iwig,l1,l2,il,imu,im1,im2,mu,m1,m2,featsize
+INTEGER:: iat,n1,n2,iwig,l1,l2,il,imu,im1,im2,mu,m1,m2,featsize, temp1, temp2
 INTEGER, DIMENSION(2,llmax):: llvec
 REAL*8, DIMENSION(wigdim):: w3j
 REAL*8, DIMENSION(2*lam+1):: preal
@@ -50,13 +50,15 @@ if(size(v2, dim=3) .lt. nrad2) then
 else
    print*, "Number of radial functions 2: ", nrad2
 endif
-if(size(v1, dim=2) .lt. max(llvec(1,:))+1) then
+temp1 = max(llvec(1,:))
+if(size(v1, dim=2) .lt. temp1+1) then
    print*, "Error: Number of angular functions must be greater than limit nang1."
    stop
 else
    print*, "Number of angular functions 1: ", nang1
 endif
-if(size(v2, dim=2) .lt. max(llvec(2,:))+1) then
+temp2 = max(llvec(2,:))
+if(size(v2, dim=2) .lt. temp2+1) then
    print*, "Error: Number of angular functions must be greater than limit nang1."
    stop
 else
