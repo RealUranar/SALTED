@@ -31,6 +31,19 @@ REAL*8:: inner, normfact
 
 p = 0.d0
 
+if(natoms .le. 0) then
+   print*, "Error: Number of atoms must be greater than zero."
+   stop
+endif
+if(size(v1, dim=3) .l. nrad1) then
+   print*, "Error: Number of radial functions must be greater than limit nrad1."
+   stop
+endif
+if(size(v2, dim=3) .l. nrad2) then
+   print*, "Error: Number of radial functions must be greater than limit nrad2."
+   stop
+endif
+
 !$OMP PARALLEL DEFAULT(private) &
 !$OMP FIRSTPRIVATE(natoms,nang1,nang2,nrad1,nrad2,w3j,llmax,llvec,lam,c2r,featsize) &
 !$OMP SHARED(p,v1,v2)
@@ -53,6 +66,10 @@ do iat=1,natoms
                   m2 = m1-mu
                   if (abs(m2)<=l2) then 
                      im2 = m2+l2+1
+                     if (size(v1(im1,l1+1,n1,iat)) /= size(v2(im2,l2+1,n2,iat))) then
+                        print*, "Error: Vectors are not the same length."
+                        stop
+                     endif
                      pcmplx(imu) = pcmplx(imu) &
                                  + w3j(iwig) * v1(im1,l1+1,n1,iat) * dconjg(v2(im2,l2+1,n2,iat))
                      iwig = iwig + 1
