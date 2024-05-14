@@ -35,11 +35,11 @@ if(natoms .le. 0) then
    print*, "Error: Number of atoms must be greater than zero."
    stop
 endif
-if(size(v1, dim=3) .l. nrad1) then
+if(size(v1, dim=3) .lt. nrad1) then
    print*, "Error: Number of radial functions must be greater than limit nrad1."
    stop
 endif
-if(size(v2, dim=3) .l. nrad2) then
+if(size(v2, dim=3) .lt. nrad2) then
    print*, "Error: Number of radial functions must be greater than limit nrad2."
    stop
 endif
@@ -66,10 +66,6 @@ do iat=1,natoms
                   m2 = m1-mu
                   if (abs(m2)<=l2) then 
                      im2 = m2+l2+1
-                     if (size(v1(im1,l1+1,n1,iat)) /= size(v2(im2,l2+1,n2,iat))) then
-                        print*, "Error: Vectors are not the same length."
-                        stop
-                     endif
                      pcmplx(imu) = pcmplx(imu) &
                                  + w3j(iwig) * v1(im1,l1+1,n1,iat) * dconjg(v2(im2,l2+1,n2,iat))
                      iwig = iwig + 1
