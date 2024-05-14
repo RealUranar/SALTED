@@ -50,14 +50,14 @@ if(size(v2, dim=3) .lt. nrad2) then
 else
    print*, "Number of radial functions 2: ", nrad2
 endif
-temp1 = max(llvec(1,:))
+temp1 = maxval(llvec(1,:))
 if(size(v1, dim=2) .lt. temp1+1) then
    print*, "Error: Number of angular functions must be greater than limit nang1."
    stop
 else
    print*, "Number of angular functions 1: ", nang1
 endif
-temp2 = max(llvec(2,:))
+temp2 = maxval(llvec(2,:))
 if(size(v2, dim=2) .lt. temp2+1) then
    print*, "Error: Number of angular functions must be greater than limit nang1."
    stop
