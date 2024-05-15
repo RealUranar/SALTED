@@ -53,7 +53,7 @@ def build():
     start = time.time()
 
     ndata_true = ndata
-    print(f"The dataset contains {ndata_true} frames.")
+    print(f"The dataset contains {ndata_true} frames.", flush=True, file=sys.stdout)
 
     conf_range = list(range(ndata_true))
     random.Random(3).shuffle(conf_range)
@@ -65,7 +65,7 @@ def build():
         sys.exit(1)
 
     conf_range = conf_range[:ndata]
-    print(f"Selected {ndata} frames.")
+    print(f"Selected {ndata} frames." , flush=True, file=sys.stdout)
 
     frames = read(filename,":")
     frames = list( frames[i] for i in conf_range )
@@ -87,7 +87,7 @@ def build():
         n2 = np.array([np.sum(x[i] * np.conj([x[i]])) for i in range(len(x))])
         dl = n2 + n2[iy[0]] - 2*np.real(np.dot(x,np.conj(x[iy[0]])))
         for i in range(1,d):
-            print("Doing ",i," of ",d," dist = ",max(dl))
+            print("Doing ",i," of ",d," dist = ",max(dl) , flush=True, file=sys.stdout)
             iy[i] = np.argmax(dl)
             nd = n2 + n2[iy[i]] - 2*np.real(np.dot(x,np.conj(x[iy[i]])))
             dl = np.minimum(dl,nd)
@@ -189,7 +189,7 @@ def build():
     # Compute equivariant descriptors for each lambda value entering the SPH expansion of the electron density
     for lam in range(lmax_max+1):
 
-        print("lambda =", lam)
+        print("lambda =", lam , flush=True, file=sys.stdout)
 
         # Select relevant angular components for equivariant descriptor calculation
         llmax = 0
@@ -224,7 +224,7 @@ def build():
         p = equicomb.equicomb(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
         p = np.transpose(p,(2,0,1))
 
-        print(f"feature space size = {featsize}")
+        print(f"feature space size = {featsize}" , flush=True, file=sys.stdout)
 
         #TODO modify SALTED to directly deal with compact natoms_total dimension
         if lam==0:
