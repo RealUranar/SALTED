@@ -54,7 +54,7 @@ def build():
 
     # compute rkhs projector and save
     features = h5py.File(osp.join(sdir,f"FEAT_M-{Menv}.h5"),'r')
-    h5f = h5py.File(osp.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w')
+    h5f = h5py.File(osp.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w', driver='mpio', comm=comm)
     for spe in species:
         power_env_sparse = features['sparse_descriptors'][spe]['0'][:]
         Mspe = power_env_sparse.shape[0]
