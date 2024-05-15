@@ -189,7 +189,7 @@ def build():
     # Compute equivariant descriptors for each lambda value entering the SPH expansion of the electron density
     for lam in range(lmax_max+1):
 
-        print("lambda =", lam)
+        print("lambda =", lam, file=sys.stdout, flush=True)
 
         # Select relevant angular components for equivariant descriptor calculation
         llmax = 0
