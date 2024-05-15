@@ -1,9 +1,6 @@
 """Translate basis info from FHI-aims calculation to SALTED basis info"""
-
 import os
 from typing import Dict, List
-
-import inp
 from ase.io import read
 
 from salted.basis_client import (
@@ -11,7 +8,6 @@ from salted.basis_client import (
     SpeciesBasisData,
     compare_species_basis_data,
 )
-
 from salted.get_basis_info import get_parser
 from salted.sys_utils import ParseConfig
 
@@ -21,6 +17,7 @@ def build(dryrun: bool = False, force_overwrite: bool = False):
     update the basis_data dict,
     and write to the database when all species are recorded.
     """
+    inp = ParseConfig().parse_input()
     assert inp.qm.qmcode.lower() == "aims", f"{inp.qm.qmcode=}, but expected 'aims'"
 
     spe_set = set(inp.system.species)
@@ -51,7 +48,8 @@ def build(dryrun: bool = False, force_overwrite: bool = False):
             else:
                 if not compare_species_basis_data(basis_data[spe], spe_basis_data):
                     raise ValueError(
-                        f"Species {spe} has inconsistent basis data: {basis_data[spe]} and {spe_basis_data}, file: {basis_info_fpath}"
+                        f"Species {spe} has inconsistent basis data: {basis_data[spe]} and {spe_basis_data}, "
+                        f"file: {basis_info_fpath}"
                     )
 
         """check if all species are recorded"""
