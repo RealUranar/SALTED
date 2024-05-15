@@ -37,6 +37,9 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
 
     if (filename is None) and (spelist is None) and (dfbasis is None):
         inp = ParseConfig().parse_input()
+        if inp.qm.qmcode=="pyscf":
+            from salted.pyscf.get_basis_info import get_aux_basis_name
+            inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         filename = inp.system.filename
         spelist = inp.system.species
         dfbasis = inp.qm.dfbasis
