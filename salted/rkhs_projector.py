@@ -36,17 +36,6 @@ def build():
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
     gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
 
-    if parallel:
-        from mpi4py import MPI
-        # MPI information
-        comm = MPI.COMM_WORLD
-        size = comm.Get_size()
-        rank = comm.Get_rank()
-    #    print('This is task',rank+1,'of',size)
-    else:
-        rank=0
-        size=1
-
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
@@ -54,7 +43,7 @@ def build():
 
     # compute rkhs projector and save
     features = h5py.File(osp.join(sdir,f"FEAT_M-{Menv}.h5"),'r')
-    h5f = h5py.File(osp.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w', driver='mpio', comm=comm)
+    h5f = h5py.File(osp.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w')
     for spe in species:
         power_env_sparse = features['sparse_descriptors'][spe]['0'][:]
         Mspe = power_env_sparse.shape[0]
