@@ -1,7 +1,3 @@
-"""
-TODO: replace class arraylist by numpy.concatenate
-"""
-
 import os
 import sys
 import time
@@ -13,7 +9,7 @@ import numpy as np
 from scipy import sparse
 from ase.data import atomic_numbers
 
-from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range,get_feats_projs
+from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range
 
 from rascaline import SphericalExpansion
 from rascaline import LodeSphericalExpansion
@@ -27,6 +23,7 @@ from salted.lib import equicomb
 from salted.lib import equicombsparse
 
 def build():
+    inp = ParseConfig().parse_input()
 
     # salted parameters
     (saltedname, saltedpath,
@@ -53,32 +50,6 @@ def build():
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
-    #   define a numpy equivalent to an appendable list
-    class arraylist:
-        def __init__(self):
-            self.data = np.zeros((100000,))
-            self.capacity = 100000
-            self.size = 0
-
-        def update(self, row):
-            n = row.shape[0]
-            self.add(row,n)
-
-        def add(self, x, n):
-            if self.size+n >= self.capacity:
-                self.capacity *= 2
-                newdata = np.zeros((self.capacity,))
-                newdata[:self.size] = self.data[:self.size]
-                self.data = newdata
-
-            self.data[self.size:self.size+n] = x
-            self.size += n
-
-        def finalize(self):
-            return self.data[:self.size]
-
-    fdir = f"rkhs-vectors_{saltedname}"
-
     HYPER_PARAMETERS_DENSITY = {
         "cutoff": rcut1,
         "max_radial": nrad1,
@@ -99,54 +70,80 @@ def build():
         "radial_basis": {"Gto": {"spline_accuracy": 1e-6}}
     }
 
-    # Load feature space sparsification information if required
-    if sparsify:
-        vfps = {}
-        for lam in range(lmax_max+1):
+    # Load training feature vectors and RKHS projection matrix
+    vfps = {}
+    for lam in range(lmax_max+1):
+        # Load sparsification details
+        if sparsify:
             vfps[lam] = np.load(osp.join(
                 saltedpath, f"equirepr_{saltedname}", f"fps{ncut}-{lam}.npy"
             ))
 
-    # Load training feature vectors and RKHS projection matrix
-    Vmat,Mspe,power_env_sparse = get_feats_projs(species,lmax)
-
-    # compute the weight-vector size
-    cuml_Mcut = {}
-    totsize = 0
-    for spe in species:
-        for lam in range(lmax[spe]+1):
-            for n in range(nmax[(spe,lam)]):
-                cuml_Mcut[(spe,lam,n)] = totsize
-                totsize += Vmat[(lam,spe)].shape[1]
-
-    if rank == 0: print(f"problem dimensionality: {totsize}", file=sys.stdout, flush=True)
-
-    if (rank == 0):
-        dirpath = os.path.join(saltedpath, fdir, f"M{Menv}_zeta{zeta}")
-        if not os.path.exists(dirpath):
-            os.makedirs(dirpath)
-    if size > 1:  comm.Barrier()
+    sdir = osp.join(saltedpath, f"equirepr_{saltedname}")
 
     # Distribute structures to tasks
     if parallel:
         conf_range = get_conf_range(rank,size,ndata,list(range(ndata)))
         conf_range = comm.scatter(conf_range,root=0)
-        print('Task',rank+1,'handles the following structures:',conf_range, file=sys.stdout, flush=True)
+        print('Task',rank+1,'handles the following structures:',conf_range,flush=True)
     else:
         conf_range = range(ndata)
+
+    sparse_set = np.loadtxt(osp.join(sdir, f"sparse_set_{Menv}.txt"),int)
+    fps_idx = sparse_set[:,0]
+    fps_species = sparse_set[:,1]
+
+    Mspe = {}
+    for spe in species:
+        Mspe[spe] = 0
+
+    fps_indexes_per_conf = {}
+    for iconf in range(ndata):
+        for spe in species:
+            fps_indexes_per_conf[(iconf,spe)] = []
+
+    itot = 0
+    Midx_spe = {}
+    for iconf in range(ndata):
+        for spe in species:
+            Midx_spe[(iconf,spe)] = Mspe[spe]
+        for iat in range(natoms[iconf]):
+            if itot in fps_idx:
+                for spe in species:
+                    if iat in atom_idx[(iconf,spe)]:
+                        fps_indexes_per_conf[(iconf,spe)].append(iat)
+                        Mspe[spe] += 1
+            itot += 1
+
+    power_env_sparse = {}
+    for spe in species:
+        for lam in range(lmax_max+1):
+            if sparsify:
+                featsize = ncut
+            else:
+                llmax = 0
+                for l1 in range(nang1+1):
+                    for l2 in range(nang2+1):
+                        # keep only even combination to enforce inversion symmetry
+                        if (lam+l1+l2)%2==0 :
+                            if abs(l2-lam) <= l1 and l1 <= (l2+lam) :
+                                llmax+=1
+                nspe1 = len(neighspe1)
+                nspe2 = len(neighspe2)
+                featsize = nspe1*nspe2*nrad1*nrad2*llmax
+            if lam==0:
+                power_env_sparse[(spe,lam)] = np.zeros((Mspe[spe],featsize))
+            else:
+                power_env_sparse[(spe,lam)] = np.zeros((Mspe[spe],(2*lam+1),featsize))
 
     frames = read(filename,":")
 
     for iconf in conf_range:
 
         start_time = time.time()
-        print(f"{iconf} start", file=sys.stdout, flush=True)
+        print(f"{iconf} start", flush=True)
 
         structure = frames[iconf]
-
-        # load reference QM data to total array size
-        coefs = np.load(osp.join(saltedpath, path2qm, "coefficients", f"coefficients_conf{iconf}.npy"))
-        Tsize = len(coefs)
 
         if rep1=="rho":
             # get SPH expansion for atomic density
@@ -212,14 +209,13 @@ def build():
         spx_pot = spx_pot.keys_to_properties("neighbor_type")
         spx_pot = spx_pot.keys_to_samples("center_type")
 
-        # Get 2nd set of coefficients as a complex numpy array 
+        # Get 2nd set of coefficients as a complex numpy array
         omega2 = np.zeros((nang2+1,natoms[iconf],2*nang2+1,nspe2*nrad2),complex)
         for l in range(nang2+1):
             c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
             omega2[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx_pot.block(o3_lambda=l).values)
 
         # Compute equivariant features for the given structure
-        power = {}
         for lam in range(lmax_max+1):
 
             # Select relevant angular components for equivariant descriptor calculation
@@ -266,91 +262,35 @@ def build():
                 p = equicomb.equicomb(natoms[iconf],nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
                 p = np.transpose(p,(2,0,1))
 
+
             # Fill vector of equivariant descriptor
             if lam==0:
-                power[lam] = p.reshape(natoms[iconf],featsize)
+                power = p.reshape(natoms[iconf],featsize)
             else:
-                power[lam] = p.reshape(natoms[iconf],2*lam+1,featsize)
+                power = p.reshape(natoms[iconf],2*lam+1,featsize)
 
-        # Compute kernels and projected RKHS features
-        Psi = {}
-        ispe = {}
-        for spe in species:
-            ispe[spe] = 0
-
-            # l=0
-            if zeta == 1:
-                # sparse power spectrum already projected on truncated RKHS
-                kernel0_nm = np.dot(power[0][atom_idx[(iconf,spe)]],power_env_sparse[(0,spe)].T)
-                Psi[(spe,0)] = kernel0_nm
-
-            else:
-
-                kernel0_nm = np.dot(power[0][atom_idx[(iconf,spe)]],power_env_sparse[(0,spe)].T)
-                kernel_nm = kernel0_nm**zeta
-                Psi[(spe,0)] = np.real(np.dot(kernel_nm,Vmat[(0,spe)]))
-
-            # l>0
-            for lam in range(1,lmax[spe]+1):
-
-                # compute feature vector Phi associated with the RKHS of K_NM * K_MM^-1 * K_NM^T
-                if zeta == 1:
-
-                    # sparse power spectrum already projected on truncated RKHS
-                    Psi[(spe,lam)] = np.dot(power[lam][atom_idx[(iconf,spe)]].reshape(natom_dict[(iconf,spe)]*(2*lam+1),power[lam].shape[-1]),power_env_sparse[(lam,spe)].T)
-
-                else:
-
-                    kernel_nm = np.dot(power[lam][atom_idx[(iconf,spe)]].reshape(natom_dict[(iconf,spe)]*(2*lam+1),power[lam].shape[-1]),power_env_sparse[(lam,spe)].T)
-                    for i1 in range(natom_dict[(iconf,spe)]):
-                        for i2 in range(Mspe[spe]):
-                            kernel_nm[i1*(2*lam+1):i1*(2*lam+1)+2*lam+1][:,i2*(2*lam+1):i2*(2*lam+1)+2*lam+1] *= kernel0_nm[i1,i2]**(zeta-1)
-                    Psi[(spe,lam)] = np.real(np.dot(kernel_nm,Vmat[(lam,spe)]))
-
-
-        # build sparse feature-vector memory efficiently
-        nrows = Tsize
-        ncols = totsize
-        srows = arraylist()
-        scols = arraylist()
-        psi_nonzero = arraylist()
-        i = 0
-        for iat in range(natoms[iconf]):
-            spe = atomic_symbols[iconf][iat]
-            for l in range(lmax[spe]+1):
-                i1 = ispe[spe]*(2*l+1)
-                i2 = ispe[spe]*(2*l+1)+2*l+1
-                x = Psi[(spe,l)][i1:i2]
-                nz = np.nonzero(x)
-                vals = x[x!=0]
-                for n in range(nmax[(spe,l)]):
-                    psi_nonzero.update(vals)
-                    srows.update(nz[0]+i)
-                    scols.update(nz[1]+cuml_Mcut[(spe,l,n)])
-                    i += 2*l+1
-            ispe[spe] += 1
-
-        psi_nonzero = psi_nonzero.finalize()
-        srows = srows.finalize()
-        scols = scols.finalize()
-        ij = np.vstack((srows,scols))
-
-        del srows
-        del scols
-
-        sparse_psi = sparse.coo_matrix((psi_nonzero, ij), shape=(nrows, ncols))
-        sparse.save_npz(osp.join(
-            saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}.npz"
-        ), sparse_psi)
-
-        del sparse_psi
-        del psi_nonzero
-        del ij
+            for spe in species:
+                nfps = len(fps_indexes_per_conf[(iconf,spe)])
+                power_env_sparse[(spe,lam)][Midx_spe[(iconf,spe)]:Midx_spe[(iconf,spe)]+nfps] = power[fps_indexes_per_conf[(iconf,spe)]]
 
         end_time = time.time()
         print(f"{iconf} end, time cost = {(end_time - start_time):.2f} s", flush=True)
 
+    if parallel:
+        comm.Barrier()
+        for spe in species:
+            for lam in range(lmax[spe]+1):
+                power_env_sparse[(spe,lam)] = comm.allreduce(power_env_sparse[(spe,lam)])
 
+    if rank==0:
+
+        # reshape sparse vector and save
+        h5f = h5py.File(osp.join(sdir,  f"FEAT_M-{Menv}.h5"), 'w')
+        for spe in species:
+            for lam in range(lmax[spe]+1):
+                power_env_sparse[(spe,lam)] = power_env_sparse[(spe,lam)].reshape(Mspe[spe]*(2*lam+1),power_env_sparse[(spe,lam)].shape[-1])
+                h5f.create_dataset(f"sparse_descriptors/{spe}/{lam}",data=power_env_sparse[(spe,lam)])
+        h5f.close()
 
 if __name__ == "__main__":
     build()

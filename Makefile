@@ -1,24 +1,24 @@
 .PHONY: all clean f2py init
 
-all: f2py init 
+all: f2py init
 
 clean:
-	cd salted; rm -rf lib 
+	cd salted; rm -rf lib
 
-LIBDIR = salted/lib 
+LIBDIR = salted/lib
 dummy_build_folder := $(shell mkdir -p $(LIBDIR))
 
-F2PYEXE=$(shell which f2py) 
+F2PYEXE := $(shell which f2py3 || which f2py)  # simple expansion, not recursive, won't be re-evaluated
 
-FCOMPILER='gfortran' 
-F90FLAGS='-fopenmp' 
+FCOMPILER='gfortran'
+F90FLAGS='-fopenmp'
 F2PYOPT='-O2'
 LIBS='-lgomp'
 CC=gcc
 
 # WITH INTEL COMPILERS
-#FCOMPILER='intelem' 
-#F90FLAGS='-qopenmp' 
+#FCOMPILER='intelem'
+#F90FLAGS='-qopenmp'
 #F2PYOPT='-O3 -unroll-aggressive -qopt-prefetch -qopt-reportr5'
 #LIBS='-liomp5 -lpthread' # omp libraries with ifort
 
