@@ -24,52 +24,6 @@ from salted.lib import equicomb
 from salted.lib import equicombsparse
 
 
-def process_Discriptors(calculator, nrad1, nang1, nang2, neighspe1, species, atomic_numbers, filename, ndata, natoms):
-    frames = read(filename,":")
-    natoms_total = sum(natoms)
-    conf_range = range(ndata)
-
-    lam = 0
-
-    # Select relevant angular components for equivariant descriptor calculation
-    llmax = 0
-    lvalues = {}
-    for l1 in range(nang1+1):
-        for l2 in range(nang2+1):
-            # keep only even combination to enforce inversion symmetry
-            if (lam+l1+l2)%2==0 :
-                if abs(l2-lam) <= l1 and l1 <= (l2+lam) :
-                    lvalues[llmax] = [l1,l2]
-                    llmax+=1
-    # Fill dense array from dictionary
-    llvec = np.zeros((llmax,2),int)
-    for il in range(llmax):
-        llvec[il,0] = lvalues[il][0]
-        llvec[il,1] = lvalues[il][1]
-
-    nspe1 = len(neighspe1)
-    keys_array = np.zeros(((nang1+1)*len(species)*nspe1,4),int)
-    i = 0
-    for l in range(nang1+1):
-        for specen in species:
-            for speneigh in neighspe1:
-                keys_array[i] = np.array([l,1,atomic_numbers[specen],atomic_numbers[speneigh]],int)
-                i += 1
-
-    keys_selection = Labels(
-        names=["o3_lambda","o3_sigma","center_type","neighbor_type"],
-        values=keys_array
-    )
-
-    spx = calculator.compute(frames, selected_keys=keys_selection)
-    spx = spx.keys_to_properties("neighbor_type")
-    spx = spx.keys_to_samples("center_type")
-
-    # Get 1st set of coefficients as a complex numpy array
-    omega1 = np.zeros((nang1+1,natoms_total,2*nang1+1,nspe1*nrad1),complex)
-    for l in range(nang1+1):
-        c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
-        omega1[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx.block(o3_lambda=l).values)
 
 def build():
 

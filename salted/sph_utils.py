@@ -80,4 +80,3 @@ def complex_to_real_transformation(sizes):
         matrices.append(transformation_matrix)
 
     return matrices
-
