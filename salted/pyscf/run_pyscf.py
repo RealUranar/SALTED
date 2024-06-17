@@ -46,7 +46,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     if geom_indexes is None:
         geom_indexes = list(range(len(geoms_all)))
     elif len(geom_indexes) == 1:
-        geom_indexes = np.loadtxt(os.path.join(inp.salted.saltedpath,"missing_indexes.txt"),dtype=int)[geom_indexes]
+        geom_indexes = np.loadtxt(os.path.join(inp.salted.saltedpath,"missing_indexes.txt"),dtype=int, ndmin=1)[geom_indexes]
         if type(geom_indexes) != np.ndarray and type(geom_indexes) != list:
             geom_indexes = [geom_indexes]
     else:
