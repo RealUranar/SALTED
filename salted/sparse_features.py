@@ -20,6 +20,28 @@ from salted.lib import equicomb
 from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range
 
 
+def select_frames_for_fps(ndata, nsamples, forced_Indices=None):
+    conf_range = list(range(ndata))
+    random.Random(3).shuffle(conf_range)
+
+    if nsamples <= ndata:
+        ndata = nsamples
+    else:
+        print("ERROR: nsamples cannot be greater than ndata!")
+        sys.exit(1)
+
+    conf_range = conf_range[:ndata]
+    
+    if forced_Indices is not None:
+        if isinstance(forced_Indices, int):
+            forced_Indices = [forced_Indices]
+        for i in forced_Indices:
+            if i not in conf_range:
+                conf_range.append(i)
+                conf_range.pop(0)
+    
+    print(f"Selected {ndata} frames.")
+    return conf_range, ndata
 
 def build():
     inp = ParseConfig().parse_input()
@@ -32,7 +54,8 @@ def build():
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
     gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
-
+    
+    nsamples, ncut, forced_indices = ParseConfig().get_sparsify_params()
 
     # Generate directories for saving descriptors
     sdir = osp.join(saltedpath, f"equirepr_{saltedname}")
@@ -55,21 +78,11 @@ def build():
     ndata_true = ndata
     print(f"The dataset contains {ndata_true} frames.")
 
-    conf_range = list(range(ndata_true))
-    random.Random(3).shuffle(conf_range)
-
-    if nsamples <= ndata:
-        ndata = nsamples
-    else:
-        print("ERROR: nsamples cannot be greater than ndata!")
-        sys.exit(1)
-
-    conf_range = conf_range[:ndata]
-    print(f"Selected {ndata} frames.")
+    conf_range, ndata = select_frames_for_fps(ndata, nsamples, forced_indices)
 
     frames = read(filename,":")
-    frames = list( frames[i] for i in conf_range )
-    natoms = list( natoms[i] for i in conf_range )
+    frames = list( frames[i] for i in conf_range)
+    natoms = list( natoms[i] for i in conf_range)
     natoms_total = sum(natoms)
 
     def do_fps(x, d=0, initial=-1):

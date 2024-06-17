@@ -364,6 +364,21 @@ class ParseConfig:
             inp.gpr.gradtol, inp.gpr.restart, inp.gpr.blocksize, inp.gpr.trainsel
         )
 
+    def get_sparsify_params(self) -> Tuple:
+        """return sparsify parameters with a tuple
+
+        Please copy & paste:
+        ```python
+        (
+            nsamples, ncut
+        ) = ParseConfig().get_sparsify_params()
+        ```
+        """
+        inp = self.parse_input()
+        return (
+            inp.descriptor.sparsify.nsamples, inp.descriptor.sparsify.ncut, inp.descriptor.sparsify.forced_indices
+        )
+
     def check_input(self, inp:Dict):
         """Check keys (required, optional, not allowed), and value types and ranges
 
@@ -433,6 +448,7 @@ class ParseConfig:
                 "sparsify": {
                     "nsamples": (False, 100, int, lambda inp, val: val > 0),  # number of samples for sparsifying feature channel
                     "ncut": (False, 0, int, lambda inp, val: (val == 0) or (val > 0)),  # number of features to keep
+                    "forced_indices": (False, None, list, None), # indices to force inclusion in the sparsified set
                 }
             },
             "gpr": {
