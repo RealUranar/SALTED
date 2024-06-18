@@ -27,20 +27,18 @@ def select_frames_for_fps(ndata, nsamples, forced_Indices=None):
     if nsamples <= ndata:
         ndata = nsamples
     else:
-        print("ERROR: nsamples cannot be greater than ndata!")
+        print("ERROR: nsamples cannot be greater than ndata!", flush=True, file=sys.stdout)
         sys.exit(1)
 
     conf_range = conf_range[:ndata]
     
-    if forced_Indices is not None:
-        if isinstance(forced_Indices, int):
-            forced_Indices = [forced_Indices]
+    if forced_Indices is not None and len(forced_Indices) > 0:
         for i in forced_Indices:
             if i not in conf_range:
                 conf_range.append(i)
                 conf_range.pop(0)
-    
-    print(f"Selected {ndata} frames.")
+                
+    print(f"Selected {ndata} frames.", flush=True, file=sys.stdout)
     return conf_range, ndata
 
 def build():

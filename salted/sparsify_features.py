@@ -31,9 +31,7 @@ def select_frames_for_fps(ndata, nsamples, forced_Indices=None):
 
     conf_range = conf_range[:ndata]
     
-    if forced_Indices is not None:
-        if isinstance(forced_Indices, int):
-            forced_Indices = [forced_Indices]
+    if forced_Indices is not None and len(forced_Indices) > 0:
         for i in forced_Indices:
             if i not in conf_range:
                 conf_range.append(i)

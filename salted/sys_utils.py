@@ -448,7 +448,7 @@ class ParseConfig:
                 "sparsify": {
                     "nsamples": (False, 100, int, lambda inp, val: val > 0),  # number of samples for sparsifying feature channel
                     "ncut": (False, 0, int, lambda inp, val: (val == 0) or (val > 0)),  # number of features to keep
-                    "forced_indices": (False, None, list, None), # indices to force inclusion in the sparsified set
+                    "forced_indices": (False, [], list, None), # indices to force inclusion in the sparsified set
                 }
             },
             "gpr": {
