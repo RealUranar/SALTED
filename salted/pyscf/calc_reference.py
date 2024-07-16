@@ -30,7 +30,7 @@ for iconf in conf_list:
         atoms.append([symb[i],(coord[0],coord[1],coord[2])])
 
     # Get PySCF objects for wave-function and density-fitted basis
-    dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, verbose=4)
+    dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, inp.qm.solvent_eps ,verbose=4)
     
     mol = gto.M(atom=atoms,basis=inp.qm.qmbasis, unit='angstrom', max_memory=12000)
     ribasis = get_aux_basis_name(inp.qm.qmbasis)

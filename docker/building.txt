@@ -1,0 +1,4 @@
+docker build --build-arg SALTED_VER=3 -t test .
+
+
+# build-arg SALTED_VER=3 is only used to control, that it downloads the current version of SALTED

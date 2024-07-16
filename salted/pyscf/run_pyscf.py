@@ -18,12 +18,19 @@ def run_pyscf(
     atoms: List,
     basis: str,
     xc: str,
+    solvent_eps: float = 1,
     verbose: int = 0,
 ):
     # Get PySCF objects for wave-function and density-fitted basis
     mol = gto.M(atom=atoms,basis=basis, unit='angstrom', max_memory=12000)
     mol.verbose = verbose
-    m = dft.rks.RKS(mol)
+    if solvent_eps != 1:
+        from pyscf.solvent import CPCM
+        m = CPCM(mol.RKS())
+        m.with_solvent.method = "COSMO"
+        m.with_solvent.eps = solvent_eps
+    else:
+        m = dft.rks.RKS(mol)
     
     if "r2scan" in xc.lower():
         m._numint.libxc = dft.xcfun
@@ -79,7 +86,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]
 
-        dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, verbose=verbose)
+        dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, inp.qm.solvent_eps, verbose=verbose)
         np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
     print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")
