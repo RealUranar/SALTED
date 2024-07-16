@@ -25,8 +25,8 @@ def run_pyscf(
     mol = gto.M(atom=atoms,basis=basis, unit='angstrom', max_memory=12000)
     mol.verbose = verbose
     if solvent_eps != 1:
-        from pyscf.solvent import CPCM
-        m = CPCM(mol.RKS())
+        from pyscf.solvent import PCM
+        m = PCM(mol.RKS())
         m.with_solvent.method = "COSMO"
         m.with_solvent.eps = solvent_eps
     else:
