@@ -46,15 +46,10 @@ RUN pip install meson cython \
     && pip install --prefer-binary pyscf
 
 #Install SALTED
-ARG SALTED_VER=unknown
-RUN wget https://github.com/RealUranar/SALTED/archive/refs/heads/master.zip\
-    && unzip master.zip \
-    && rm master.zip \
-    && cd SALTED-master/ \
+COPY ../ /src/temp/SALTED-master
+RUN cd /src/temp/SALTED-master \
     && make \
-    && pip install . \
-	&& cd .. \
-	&& rm -R SALTED-master
+    && pip install .
 
 WORKDIR /
 RUN rm -R /src/temp
