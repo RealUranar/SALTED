@@ -29,7 +29,7 @@ RUN wget https://hdf-wordpress-1.s3.amazonaws.com/wp-content/uploads/manual/HDF5
     && tar -xf hdf5-1.14.3.tar.gz \
     && cd hdf5-1.14.3 \
     && HDF5_MPI="ON" CC=mpicc ./configure --enable-shared --enable-parallel --prefix=/usr/local/hdf5 \
-    && HDF5_DIR=/usr/local/hdf5 make\
+    && HDF5_DIR=/usr/local/hdf5 make \
     && HDF5_DIR=/usr/local/hdf5 make install \
     && cd .. \
 	&& rm -R hdf5-1.14.3
@@ -55,4 +55,5 @@ WORKDIR /
 RUN rm -R /src/temp
 
 COPY docker/scripts_HPC /scripts
+COPY docker/basis_data /basis_data
 ENTRYPOINT ["/scripts/startup.sh"]

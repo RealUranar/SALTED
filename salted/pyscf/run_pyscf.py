@@ -11,20 +11,41 @@ from ase.io import read
 from pyscf import gto, dft, lib, df
 
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
-
+from salted.pyscf.get_basis_info import read_basis
 
 
 def run_pyscf(
     atoms: List,
-    basis: str,
+    basis: str|dict,
     xc: str,
+    spin = 0,
+    charge = 0,
     solvent_eps: float = 1,
     verbose: int = 0,
 ):
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=basis, unit='angstrom', max_memory=12000)
-    mol.verbose = verbose
+    try:
+        mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=spin, charge=charge, verbose=verbose, basis=basis)
+    except lib.exceptions.BasisNotFoundError:
+        print("Using self defined basis", file=sys.stdout, flush=True)
+        #Had to turn off verbosity for the creation as it prints out the whole basis set
+        try:
+            mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=spin, charge=charge, verbose=0, basis=read_basis(basis, fit=False, species=set([a[0] for a in atoms])))
+        except RuntimeError as e:
+            if len(atoms) == 1:
+                mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=1, charge=charge, verbose=0, basis=read_basis(basis, fit=False, species=set([a[0] for a in atoms])))
+            else:
+                print(f"Error: {e}", file=sys.stdout, flush=True)
+                raise e
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stdout, flush=True)
+            raise e
+            
+        
+    print(solvent_eps, file=sys.stdout, flush=True)
+    #Choose solvent model, if any
     if solvent_eps != 1:
+        
         from pyscf.solvent import PCM
         m = PCM(mol.RKS())
         m.with_solvent.method = "COSMO"
@@ -32,13 +53,29 @@ def run_pyscf(
     else:
         m = dft.rks.RKS(mol)
     
+    m.verbose = verbose
+    m.max_cycle = 400
+    
+    #If single atom, use atom guess
+    if len(atoms) == 1:
+        m.init_guess = "atom"
+    
+    # #Setup Functional
     if "r2scan" in xc.lower():
         m._numint.libxc = dft.xcfun
+    m.xc = xc
+    
+    # #Setup Grids
     m.grids.radi_method = dft.gauss_chebyshev
     m.grids.level = 0
+    
+    #Setup density fitting
     m = m.density_fit()
-    m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(basis)][0]
-    m.xc = xc
+    try:
+        m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(basis)][0]
+    except KeyError:
+        m.with_df.auxbasis = read_basis(basis, fit=True, species=set([a[0] for a in atoms]))
+    
     try:
         m.kernel()
     except ValueError:
@@ -77,7 +114,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         lib.num_threads(num_threads)
 
     """ do DFT calculation """
-    verbose = 4 if len(geom_indexes) == 1 else 0
+    verbose = 4 if len(geom_indexes) == 1 else 4
     start_time = time.time()
     for cal_idx, (geom_idx, geom) in enumerate(zip(geom_indexes, geoms)):
         print(f"calcualte {geom_idx=}, progress: {cal_idx}/{len(geom_indexes)}", file = sys.stdout, flush=True)
@@ -85,8 +122,8 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         symb = geom.get_chemical_symbols()
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]
-
-        dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, inp.qm.solvent_eps, verbose=verbose)
+        
+        dm = run_pyscf(atoms = atoms, basis = inp.qm.qmbasis, xc= inp.qm.functional, solvent_eps = inp.qm.solvent_eps, verbose=verbose)
         np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
     print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")

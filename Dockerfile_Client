@@ -55,4 +55,5 @@ WORKDIR /
 RUN rm -R /src/temp
 
 COPY docker/scripts_Client /scripts
+COPY docker/basis_data /basis_data
 ENTRYPOINT ["/scripts/startup.sh"]

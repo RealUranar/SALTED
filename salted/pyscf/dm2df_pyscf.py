@@ -14,8 +14,7 @@ from scipy import special
 
 from salted.basis_client import BasisClient, SpeciesBasisData
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps
-from salted.pyscf.get_basis_info import get_aux_basis_name
-
+from salted.pyscf.get_basis_info import get_aux_basis_name, read_basis
 
 __doc__ = """
 PySCF orders all angular momentum components for L>1 as -L,...,0,...,+L,
@@ -111,14 +110,21 @@ def cal_df_coeffs_old(
 
 def cal_df_coeffs(
     atoms: List,
-    qmbasis: str,
-    ribasis: str,
+    qmbasis: str|dict,
+    ribasis: str|dict,
     dm: np.ndarray,
     irreps: Irreps,
 ):
     pyscf_time = time.time()
-    mol = gto.M(atom=atoms, basis=qmbasis)
-    auxmol = gto.M(atom=atoms, basis=ribasis)
+    try:
+        mol = gto.M(atom=atoms, basis=qmbasis)
+        auxmol = gto.M(atom=atoms, basis=ribasis)
+    except RuntimeError as e:
+        if "spin" in str(e):
+            mol = gto.M(atom=atoms, basis=qmbasis, spin=1)
+            auxmol = gto.M(atom=atoms, basis=ribasis, spin=1)
+        else:
+            raise e
     pmol = mol + auxmol
     assert dm.shape[0] == mol.nao_nr(), f"{dm.shape=}, {mol.nao_nr()=}"
 
@@ -213,6 +219,14 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
 
     lmax, nmax = BasisClient().read_as_old_format(get_aux_basis_name(inp.qm.qmbasis))
     ribasis = get_aux_basis_name(inp.qm.qmbasis)  # RI basis name in pyscf
+    #check if ribasis is in pyscf
+    try:
+        df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qm.qmbasis)][0]  # get the proper DF basis name in PySCF
+        qmbasis = inp.qm.qmbasis
+    except KeyError:
+        ribasis = read_basis(inp.qm.qmbasis, fit = True)
+        qmbasis = read_basis(inp.qm.qmbasis, fit = False)
+        
     basis_data = BasisClient().read(get_aux_basis_name(inp.qm.qmbasis))
     df_irreps_by_spe = {
         spe: Irreps(tuple((cnt, lam) for lam, cnt in enumerate(spe_basis_data["nmax"])))
@@ -229,7 +243,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         atoms = [(s, c) for s, c in zip(symb, coords)]
         irreps = sum([df_irreps_by_spe[spe] for spe in symb], Irreps([]))
         dm = np.load(osp.join(inp.qm.path2qm, "density_matrices", f"dm_conf{geom_idx}.npy"))
-        reordered_data = cal_df_coeffs(atoms, inp.qm.qmbasis, ribasis, dm, irreps)
+        reordered_data = cal_df_coeffs(atoms, qmbasis, ribasis, dm, irreps)
         
         """Uncomment if testing consistency with old code is needed."""
         # reordered_data_old = cal_df_coeffs_old(atoms, inp.qm.qmbasis, ribasis, dm, lmax, nmax)  # for checking consistency
