@@ -14,7 +14,7 @@ from salted.basis_client import (
     SpeciesBasisData,
 )
 from salted.get_basis_info import get_parser
-from salted.sys_utils import ParseConfig
+from salted.sys_utils import ParseConfig, PLACEHOLDER
 
 
 def build(dryrun: bool = False, force_overwrite: bool = False):
@@ -29,13 +29,20 @@ def build(dryrun: bool = False, force_overwrite: bool = False):
     qmbasis = inp.qm.qmbasis
 
     """load density fitting basis from pyscf module"""
-    try:
+    if inp.qm.dfbasis == PLACEHOLDER:
+        #When no dfbasis was defined, give the qmbasis to pySCF and see...
         dfbasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(qmbasis)][0]  # get the proper DF basis name in PySCF
         print(f"{spe_set=}, {qmbasis=}, and the parsed {dfbasis=}")
         basis_data: Dict[str, SpeciesBasisData] = load_from_pyscf(list(spe_set), dfbasis)
-    except KeyError:
-        print("Selected qmbasis is not available in PySCF. Guessing this is self defined.")
-        basis_data: Dict[str, SpeciesBasisData] = load_from_file(list(spe_set), qmbasis)
+    else:
+        if find_basis_file(inp.qm.dfbasis)[0] == "":
+            #If no file was found, it returns the given dfbasis
+            print("Defined df-Basis is available in PySCF")
+            basis_data: Dict[str, SpeciesBasisData] = load_from_pyscf(list(spe_set), inp.qm.dfbasis)
+        else:
+            #If something is returned, try to load it as a basis-set...
+            print("Trying to load df-Basis from File")
+            basis_data: Dict[str, SpeciesBasisData] = load_from_file(list(spe_set), inp.qm.dfbasis)
     
 
     """write to the database"""
@@ -65,7 +72,7 @@ def load_from_pyscf(species_list: List[str], dfbasis: str) -> Dict[str, "Species
     basis_data = {spe: collect_l_nums(ribasis_info) for spe, ribasis_info in spe_dfbasis_info.items()}
     return basis_data
 
-def find_basis_file(qmbasis: str, fit: bool = True) -> Tuple[str, str]:
+def find_basis_file(basis_name: str) -> Tuple[str, str]:
     """
     Return the file path of the basis set file and the name of the basis set.
 
@@ -77,11 +84,14 @@ def find_basis_file(qmbasis: str, fit: bool = True) -> Tuple[str, str]:
         Tuple[str, str]: File path of the basis set file and the name of the basis set.
     """
     basis_files = glob.glob(os.path.join('/basis_data', '*'))
-    basis_files = [os.path.basename(f) for f in basis_files if qmbasis in f]
-    basis_file = [file_name for file_name in basis_files if ("fit" in file_name) == fit][0]
-    return os.path.join('/basis_data', basis_file), basis_file.split(".")[0]
+    basis_file_path = [f for f in basis_files if basis_name in f]
+    if not basis_file_path:
+        print(f"Did not find a basis '{basis_name}', trying to find it in pyscf")
+        return "" , basis_name
+    print(f"For Basis {basis_name}, i choose the file {basis_file_path}")
+    return basis_file_path[0], os.path.basename(basis_file_path[0]).split(".")[0]
 
-def read_basis(qmbasis: str, species: List[str] = None, fit = True) -> Dict[str, List]:
+def read_basis(basis_name: str, species: List[str] = None) -> Dict[str, List]:
     """
     Read basis data for given species from a file.
 
@@ -104,7 +114,7 @@ def read_basis(qmbasis: str, species: List[str] = None, fit = True) -> Dict[str,
         ]
     
     basis_data = {}
-    file_dest, dfbasis = find_basis_file(qmbasis, fit)
+    file_dest, basis_name = find_basis_file(basis_name)
     with open(file_dest, "r") as f:
         file_cont = f.read()
     
@@ -112,10 +122,10 @@ def read_basis(qmbasis: str, species: List[str] = None, fit = True) -> Dict[str,
         try:
             basis_data[spe] = basis.parse(file_cont, spe)
         except BasisNotFoundError:
-            break
+            pass
     return basis_data
 
-def load_from_file(species_list: List[str], qmbasis: str) -> Dict[str, "SpeciesBasisData"]:
+def load_from_file(species_list: List[str], dfbasis: str) -> Dict[str, "SpeciesBasisData"]:
     """
     Load basis data from a file (NWChem preferred, CP2K?, Gaussian?).
 
@@ -126,7 +136,7 @@ def load_from_file(species_list: List[str], qmbasis: str) -> Dict[str, "SpeciesB
     Returns:
         Dict[str, SpeciesBasisData]: Species and basis data.
     """
-    spe_dfbasis_info = read_basis(qmbasis, species_list)
+    spe_dfbasis_info = read_basis(dfbasis, species_list)
     
     # Extract the l numbers and compose the Dict[str, SpeciesBasisData] (species and basis data)
     basis_data = {spe: collect_l_nums(dfbasis_info) for spe, dfbasis_info in spe_dfbasis_info.items()}
@@ -170,12 +180,13 @@ def get_aux_basis_name(qmbasis: str) -> str:
     Returns:
         str: auxiliary basis name
     """
-    try:
+    inp = ParseConfig().parse_input()
+    if inp.qm.dfbasis == PLACEHOLDER:
         ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(qmbasis)][0]
-    except KeyError:
-        import glob
-        print("Selected qmbasis is not available in PySCF. Guessing this is self defined.")
-        ribasis_path, ribasis = find_basis_file(qmbasis)
+    else:
+        print("DF-Basis defined, Checking for basis-file.")
+        ribasis_path, ribasis = find_basis_file(inp.qm.dfbasis)
+
     return ribasis
 
 if __name__ == "__main__":

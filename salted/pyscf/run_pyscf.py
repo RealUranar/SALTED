@@ -17,6 +17,7 @@ from salted.pyscf.get_basis_info import read_basis
 def run_pyscf(
     atoms: List,
     basis: str|dict,
+    dfBasis: str|dict,
     xc: str,
     spin = 0,
     charge = 0,
@@ -29,27 +30,16 @@ def run_pyscf(
     except lib.exceptions.BasisNotFoundError:
         print("Using self defined basis", file=sys.stdout, flush=True)
         #Had to turn off verbosity for the creation as it prints out the whole basis set
-        try:
-            mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=spin, charge=charge, verbose=0, basis=read_basis(basis, fit=False, species=set([a[0] for a in atoms])))
-        except RuntimeError as e:
-            if len(atoms) == 1:
-                mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=1, charge=charge, verbose=0, basis=read_basis(basis, fit=False, species=set([a[0] for a in atoms])))
-            else:
-                print(f"Error: {e}", file=sys.stdout, flush=True)
-                raise e
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stdout, flush=True)
-            raise e
-            
-        
-    print(solvent_eps, file=sys.stdout, flush=True)
+        mol = gto.M(atom=atoms, unit='angstrom', max_memory=5000, spin=spin, charge=charge, verbose=0, basis=read_basis(basis, species=set([a[0] for a in atoms])))
+   
+
     #Choose solvent model, if any
     if solvent_eps != 1:
-        
         from pyscf.solvent import PCM
         m = PCM(mol.RKS())
         m.with_solvent.method = "COSMO"
         m.with_solvent.eps = solvent_eps
+        print(f"Solvent eps = {solvent_eps}", file=sys.stdout, flush=True)
     else:
         m = dft.rks.RKS(mol)
     
@@ -74,7 +64,7 @@ def run_pyscf(
     try:
         m.with_df.auxbasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(basis)][0]
     except KeyError:
-        m.with_df.auxbasis = read_basis(basis, fit=True, species=set([a[0] for a in atoms]))
+        m.with_df.auxbasis = read_basis(basis, species=set([a[0] for a in atoms]))
     
     try:
         m.kernel()
@@ -123,7 +113,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         coords = geom.get_positions()
         atoms = [(s, c) for s, c in zip(symb, coords)]
         
-        dm = run_pyscf(atoms = atoms, basis = inp.qm.qmbasis, xc= inp.qm.functional, solvent_eps = inp.qm.solvent_eps, verbose=verbose)
+        dm = run_pyscf(atoms = atoms, basis = inp.qm.qmbasis, dfBasis=inp.qm.dfbasis, xc= inp.qm.functional, solvent_eps = inp.qm.solvent_eps, verbose=verbose)
         np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
     print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")

@@ -13,7 +13,7 @@ from ase.io import read
 from scipy import special
 
 from salted.basis_client import BasisClient, SpeciesBasisData
-from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps
+from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR, Irreps, PLACEHOLDER
 from salted.pyscf.get_basis_info import get_aux_basis_name, read_basis
 
 __doc__ = """
@@ -116,15 +116,8 @@ def cal_df_coeffs(
     irreps: Irreps,
 ):
     pyscf_time = time.time()
-    try:
-        mol = gto.M(atom=atoms, basis=qmbasis)
-        auxmol = gto.M(atom=atoms, basis=ribasis)
-    except RuntimeError as e:
-        if "spin" in str(e):
-            mol = gto.M(atom=atoms, basis=qmbasis, spin=1)
-            auxmol = gto.M(atom=atoms, basis=ribasis, spin=1)
-        else:
-            raise e
+    mol = gto.M(atom=atoms, basis=qmbasis)
+    auxmol = gto.M(atom=atoms, basis=ribasis)
     pmol = mol + auxmol
     assert dm.shape[0] == mol.nao_nr(), f"{dm.shape=}, {mol.nao_nr()=}"
 
@@ -217,15 +210,13 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     if num_threads is not None:
         lib.num_threads(num_threads)
 
-    lmax, nmax = BasisClient().read_as_old_format(get_aux_basis_name(inp.qm.qmbasis))
+    # lmax, nmax = BasisClient().read_as_old_format(get_aux_basis_name(inp.qm.qmbasis))
     ribasis = get_aux_basis_name(inp.qm.qmbasis)  # RI basis name in pyscf
     #check if ribasis is in pyscf
-    try:
-        df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(inp.qm.qmbasis)][0]  # get the proper DF basis name in PySCF
-        qmbasis = inp.qm.qmbasis
-    except KeyError:
-        ribasis = read_basis(inp.qm.qmbasis, fit = True)
-        qmbasis = read_basis(inp.qm.qmbasis, fit = False)
+    
+    if inp.qm.qmbasis != PLACEHOLDER:
+        ribasis = read_basis(inp.qm.dfbasis)
+        qmbasis = read_basis(inp.qm.qmbasis)
         
     basis_data = BasisClient().read(get_aux_basis_name(inp.qm.qmbasis))
     df_irreps_by_spe = {
