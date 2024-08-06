@@ -1,11 +1,12 @@
 # ruff: noqa: E501
 import os
 import re
-import sys
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
+import h5py
 import numpy as np
 import yaml
+from ase import Atoms
 from ase.io import read
 
 from salted import basis
@@ -34,9 +35,10 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
         natoms (numpy.ndarray): number of atoms for each configuration, shape (ndata,)
         natmax (int): maximum number of atoms in the system
     """
+
+    inp = ParseConfig().parse_input()
+
     if (filename is None) and (spelist is None) and (dfbasis is None):
-        inp = ParseConfig().parse_input()
-        
         filename = inp.system.filename
         spelist = inp.system.species
         dfbasis = inp.qm.dfbasis
@@ -61,6 +63,9 @@ def read_system(filename:str=None, spelist:List[str]=None, dfbasis:str=None):
             nlist.append(nmax[(spe,l)])
     nnmax = max(nlist)
     llmax = max(llist)
+
+    if inp.salted.saltedtype=="density-response":
+        llmax += 1
 
     # read system
     xyzfile = read(filename, ":", parallel=False)
@@ -103,7 +108,7 @@ def get_atom_idx(ndata,natoms,spelist,atomic_symbols):
 
     return atom_idx,natom_dict
 
-def get_conf_range(rank,size,ntest,testrangetot):
+def get_conf_range(rank,size,ntest,testrangetot) -> List[List[int]]:
     if rank == 0:
         testrange = [[] for _ in range(size)]
         blocksize = int(ntest/float(size))
@@ -135,6 +140,21 @@ def get_conf_range(rank,size,ntest,testrangetot):
 
     return testrange
 
+def do_fps(x, d=0):
+    """Perform Farthest Point Sampling selection"""
+    if d == 0 : d = len(x)
+    n = len(x)
+    iy = np.zeros(d,int)
+    iy[0] = 0
+    # Faster evaluation of Euclidean distance
+    n2 = np.sum((x*np.conj(x)),axis=1)
+    dl = n2 + n2[iy[0]] - 2*np.real(np.dot(x,np.conj(x[iy[0]])))
+    for i in range(1,d):
+        print("Doing ",i," of ",d," dist = ",max(dl))
+        iy[i] = np.argmax(dl)
+        nd = n2 + n2[iy[i]] - 2*np.real(np.dot(x,np.conj(x[iy[i]])))
+        dl = np.minimum(dl,nd)
+    return iy
 
 ARGHELP_INDEX_STR = """Indexes to calculate, start from 0. Format: 1,3-5,7-10. \
 Default is "all", which means all structures."""
@@ -185,15 +205,15 @@ def sort_grid_data(data:np.ndarray) -> np.ndarray:
     return data
 
 def get_feats_projs(species,lmax):
-    import h5py
-    import os.path as osp
+    """Load training features vectors and RKHS projection matrices
+    """
     inp = ParseConfig().parse_input()
     Vmat = {}
     Mspe = {}
     power_env_sparse = {}
-    sdir = osp.join(inp.salted.saltedpath, f"equirepr_{inp.salted.saltedname}")
-    features = h5py.File(osp.join(sdir,f"FEAT_M-{inp.gpr.Menv}.h5"),'r')
-    projectors = h5py.File(osp.join(sdir,f"projector_M{inp.gpr.Menv}_zeta{inp.gpr.z}.h5"),'r')
+    sdir = os.path.join(inp.salted.saltedpath, f"equirepr_{inp.salted.saltedname}")
+    features = h5py.File(os.path.join(sdir,f"FEAT_M-{inp.gpr.Menv}.h5"),'r')
+    projectors = h5py.File(os.path.join(sdir,f"projector_M{inp.gpr.Menv}_zeta{inp.gpr.z}.h5"),'r')
     for spe in species:
         for lam in range(lmax[spe]+1):
              # load RKHS projectors
@@ -306,7 +326,7 @@ class ParseConfig:
 
         Please copy & paste:
         ```python
-        (saltedname, saltedpath,
+        (saltedname, saltedpath, saltedtype,
          filename, species, average, field, parallel,
          path2qm, qmcode, qmbasis, dfbasis,
          filename_pred, predname, predict_data,
@@ -322,8 +342,32 @@ class ParseConfig:
             from salted.pyscf.get_basis_info import get_aux_basis_name
             inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         sparsify = False if inp.descriptor.sparsify.ncut <= 0 else True  # determine if sparsify by ncut
+        nspe1 = len(inp.descriptor.rep1.neighspe)
+        nspe2 = len(inp.descriptor.rep2.neighspe)
+
+        HYPER_PARAMETERS_DENSITY = {
+            "cutoff": inp.descriptor.rep1.rcut,
+            "max_radial": inp.descriptor.rep1.nrad,
+            "max_angular": inp.descriptor.rep1.nang,
+            "atomic_gaussian_width": inp.descriptor.rep1.sig,
+            "center_atom_weight": 1.0,
+            "radial_basis": {"Gto": {"spline_accuracy": 1e-6}},
+            "cutoff_function": {"ShiftedCosine": {"width": 0.1}},
+        }
+    
+        HYPER_PARAMETERS_POTENTIAL = {
+            "potential_exponent": 1,
+            "cutoff": inp.descriptor.rep2.rcut,
+            "max_radial": inp.descriptor.rep2.nrad,
+            "max_angular": inp.descriptor.rep2.nang,
+            "atomic_gaussian_width": inp.descriptor.rep2.sig,
+            "center_atom_weight": 1.0,
+            "radial_basis": {"Gto": {"spline_accuracy": 1e-6}}
+        }
+
+
         return (
-            inp.salted.saltedname, inp.salted.saltedpath,
+            inp.salted.saltedname, inp.salted.saltedpath, inp.salted.saltedtype,
             inp.system.filename, inp.system.species, inp.system.average, inp.system.field, inp.system.parallel,
             inp.qm.path2qm, inp.qm.qmcode, inp.qm.qmbasis, inp.qm.dfbasis,
             inp.prediction.filename, inp.prediction.predname, inp.prediction.predict_data,
@@ -333,7 +377,7 @@ class ParseConfig:
             inp.descriptor.rep2.nrad, inp.descriptor.rep2.nang, inp.descriptor.rep2.neighspe,
             sparsify, inp.descriptor.sparsify.nsamples, inp.descriptor.sparsify.ncut,
             inp.gpr.z, inp.gpr.Menv, inp.gpr.Ntrain, inp.gpr.trainfrac, inp.gpr.regul, inp.gpr.eigcut,
-            inp.gpr.gradtol, inp.gpr.restart, inp.gpr.blocksize, inp.gpr.trainsel
+            inp.gpr.gradtol, inp.gpr.restart, inp.gpr.blocksize, inp.gpr.trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL
         )
 
     def get_all_params_simple1(self) -> Tuple:
@@ -415,6 +459,7 @@ class ParseConfig:
             "salted": {
                 "saltedname": (True, None, str, None),  # salted workflow identifier
                 "saltedpath": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to SALTED outputs / working directory
+                "saltedtype": (False, 'density', str, lambda inp, val: val in ('density', 'tensor', 'density-response')),  # salted target 
             },
             "system": {
                 "filename": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to geometry file (training set)
@@ -441,6 +486,7 @@ class ParseConfig:
                 "filename": (False, PLACEHOLDER, str, None),  # path to the prediction file
                 "predname": (False, PLACEHOLDER, str, None),  # SALTED prediction identifier
                 #### below are optional, but required for some qmcode ####
+                "save_descriptor": (False, False, bool, None),  # whether saving the descriptor
                 "predict_data": (False, PLACEHOLDER, str, lambda inp, val: check_with_qmcode(inp, val, "aims")),  # path to the prediction data by QM code, only for AIMS
             },
             "descriptor": {

@@ -2,31 +2,28 @@ import os
 import sys
 import time
 
-from salted import sparsify_features, scalar_vector
+from salted import wigner, sparsify_features, scalar_vector
 from salted.sys_utils import ParseConfig
 
 def build():
+
     inp = ParseConfig().parse_input()
 
-    # salted parameters
-    (saltedname, saltedpath,
-    filename, species, average, field, parallel,
-    path2qm, qmcode, qmbasis, dfbasis,
-    filename_pred, predname, predict_data,
-    rep1, rcut1, sig1, nrad1, nang1, neighspe1,
-    rep2, rcut2, sig2, nrad2, nang2, neighspe2,
-    sparsify, nsamples, ncut,
-    zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
+    # Precompute and save the required Wigner-3j symbols, depending on SALTED target
+    wigner.build()
 
-
+    # Sparsify the feature space of symmetry-adapted descriptors?
     if inp.descriptor.sparsify.ncut > 0:
 
+        # Precompute and save the feature space sparsification details 
         sparsify_features.build()
+
+        # Compute and save the sparsified scalar descriptor 
         scalar_vector.build()
 
     else:
 
+        # Compute and save the unsparsified scalar descriptor 
         scalar_vector.build()
 
 
