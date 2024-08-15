@@ -81,14 +81,14 @@ def find_basis_file(basis_name: str) -> Tuple[str, str]:
         fit: Boolean to select fit or non-fit basis set file.
 
     Returns:
-        Tuple[str, str]: File path of the basis set file and the name of the basis set.
+        tuple[str, str]: File path of the basis set file and the name of the basis set.
     """
     basis_files = glob.glob(os.path.join('/basis_data', '*'))
     basis_file_path = [f for f in basis_files if basis_name in f]
     if not basis_file_path:
         print(f"Did not find a basis '{basis_name}', trying to find it in pyscf")
         return "" , basis_name
-    print(f"For Basis {basis_name}, i choose the file {basis_file_path}")
+    print(f"For Basis {basis_name}, i choose the file {basis_file_path[0]}")
     return basis_file_path[0], os.path.basename(basis_file_path[0]).split(".")[0]
 
 def read_basis(basis_name: str, species: List[str] = None) -> Dict[str, List]:
