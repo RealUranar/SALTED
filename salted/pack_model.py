@@ -76,6 +76,7 @@ def build():
         pack_fps(f, path, inp)
         pack_FEAT_projectors(f, path, inp)
         pack_weights(f, path, inp)
+        pack_model_info(f, inp)
 
 if __name__ == "__main__":
     build()
