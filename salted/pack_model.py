@@ -29,7 +29,7 @@ def pack_fps(h5File, path, inp):
 def pack_FEAT_projectors(h5File, path, inp):
     files = glob.glob(os.path.join(path, f"equirepr_{inp.salted.saltedname}", f'FEAT_M-{inp.gpr.Menv}.h5')) + glob.glob(os.path.join(path, f"equirepr_{inp.salted.saltedname}", f'projector_M{inp.gpr.Menv}_zeta{inp.gpr.z:.1f}.h5'))
     for file in files:
-        print(files)
+        print(file)
         with h5py.File(file, 'r') as temp:
             for key in temp.keys():
                 h5File.copy(temp[key], key)
@@ -39,6 +39,33 @@ def pack_weights(h5File, path, inp):
     data = np.load(file)
     h5File.create_dataset("weights", data=data)
 
+def pack_model_info(h5File, inp):
+    inputs = {
+        "averages": inp.system.average,
+        "field": inp.system.field,
+        "sparsify": inp.descriptor.sparsify.ncut > 0,
+        "ncut": inp.descriptor.sparsify.ncut,
+        "species": inp.system.species,
+        "rcut1": inp.descriptor.rep1.rcut,
+        "rcut2": inp.descriptor.rep2.rcut,
+        "nang1": inp.descriptor.rep1.nang,
+        "nang2": inp.descriptor.rep2.nang,
+        "nrad1": inp.descriptor.rep1.nrad,
+        "nrad2": inp.descriptor.rep2.nrad,
+        "sig1": inp.descriptor.rep1.sig,
+        "sig2": inp.descriptor.rep2.sig,
+        "neighspe1": inp.descriptor.rep1.neighspe,
+        "neighspe2": inp.descriptor.rep2.neighspe,
+        "zeta": inp.gpr.z,
+        "Menv": inp.gpr.Menv,
+        "Ntrain": inp.gpr.Ntrain,
+        "trainfrac": inp.gpr.trainfrac,
+        "dfbasis": inp.qm.dfbasis
+    }
+    grp = h5File.create_group('input')
+    for key, value in inputs.items():
+        grp.create_dataset(key, data=value)
+    
 def build():
     inp = ParseConfig().parse_input()
     path = inp.salted.saltedpath

@@ -37,7 +37,7 @@ def build():
                     m2 = m1-mu
                     if abs(m2) <= l2:
                         im2 = m2+l2
-                        w3j = wigner_3j(lam,l2,l1,mu,m2,-m1) * (-1.0)**(m1)
+                        w3j = wigner_3j(lam,int(l2),int(l1),mu,int(m2),int(-m1)) * (-1.0)**(m1)
                         print(float(w3j),file=wig) 
     
     for lam in range(lmax_max+1):

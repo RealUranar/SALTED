@@ -2,7 +2,7 @@
 Calculate RKHS vectors
 """
 
-import os
+import os, sys
 import os.path as osp
 import time
 from typing import Dict, List, Tuple
