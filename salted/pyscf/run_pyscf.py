@@ -1,8 +1,8 @@
 import argparse
 import os
 import sys
-from typing import List, Tuple, Union
 import time
+from typing import List, Tuple, Union
 
 import re, glob
 
@@ -116,7 +116,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
         dm = run_pyscf(atoms = atoms, basis = inp.qm.qmbasis, dfBasis=inp.qm.dfbasis, xc= inp.qm.functional, solvent_eps = inp.qm.solvent_eps, verbose=verbose)
         np.save(os.path.join(dirpath, f"dm_conf{geom_idx}.npy"), dm)
     end_time = time.time()
-    print(f"Calculation finished, time cost on DFT: {end_time - start_time:.2f}s")
+    print(f"Calculation finished, wall time cost on DFT: {end_time - start_time:.2f}s")
 
 
 if __name__ == "__main__":

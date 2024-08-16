@@ -1,35 +1,26 @@
 """
-TODO: replace class arraylist by numpy.concatenate
+Calculate RKHS vectors
 """
 
-import os
-import sys
-import time
+import os, sys
 import os.path as osp
-from ase.io import read
-import h5py
+import time
+from typing import Dict, List, Tuple
 
 import numpy as np
-from scipy import sparse
 from ase.data import atomic_numbers
+from ase.io import read
+from scipy import sparse
 
-from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range,get_feats_projs
-
-from rascaline import SphericalExpansion
-from rascaline import LodeSphericalExpansion
-from metatensor import Labels
-
-from salted import wigner
 from salted import sph_utils
-from salted import basis
+from salted.lib import equicomb, equicombsparse
+from salted.sys_utils import ParseConfig, get_atom_idx, get_conf_range, get_feats_projs, read_system
 
-from salted.lib import equicomb
-from salted.lib import equicombsparse
 
 def build():
 
     # salted parameters
-    (saltedname, saltedpath,
+    (saltedname, saltedpath, saltedtype,
     filename, species, average, field, parallel,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data,
@@ -37,7 +28,7 @@ def build():
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
+    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
     if parallel:
         from mpi4py import MPI
@@ -53,7 +44,8 @@ def build():
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
-    #   define a numpy equivalent to an appendable list
+    # TODO: replace class arraylist with numpy.concatenate
+    # define a numpy equivalent to an appendable list
     class arraylist:
         def __init__(self):
             self.data = np.zeros((100000,))
@@ -78,26 +70,6 @@ def build():
             return self.data[:self.size]
 
     fdir = f"rkhs-vectors_{saltedname}"
-
-    HYPER_PARAMETERS_DENSITY = {
-        "cutoff": rcut1,
-        "max_radial": nrad1,
-        "max_angular": nang1,
-        "atomic_gaussian_width": sig1,
-        "center_atom_weight": 1.0,
-        "radial_basis": {"Gto": {"spline_accuracy": 1e-6}},
-        "cutoff_function": {"ShiftedCosine": {"width": 0.1}},
-    }
-
-    HYPER_PARAMETERS_POTENTIAL = {
-        "potential_exponent": 1,
-        "cutoff": rcut2,
-        "max_radial": nrad2,
-        "max_angular": nang2,
-        "atomic_gaussian_width": sig2,
-        "center_atom_weight": 1.0,
-        "radial_basis": {"Gto": {"spline_accuracy": 1e-6}}
-    }
 
     # Load feature space sparsification information if required
     if sparsify:
@@ -148,105 +120,24 @@ def build():
         coefs = np.load(osp.join(saltedpath, path2qm, "coefficients", f"coefficients_conf{iconf}.npy"))
         Tsize = len(coefs)
 
-        if rep1=="rho":
-            # get SPH expansion for atomic density
-            calculator = SphericalExpansion(**HYPER_PARAMETERS_DENSITY)
+        omega1 = sph_utils.get_representation_coeffs(structure,rep1,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe1,species,nang1,nrad1,natoms[iconf])
+        omega2 = sph_utils.get_representation_coeffs(structure,rep2,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe2,species,nang2,nrad2,natoms[iconf])
 
-        elif rep1=="V":
-            # get SPH expansion for atomic potential
-            calculator = LodeSphericalExpansion(**HYPER_PARAMETERS_POTENTIAL)
-
-        else:
-            if rank == 0: print("Error: requested representation", rep1, "not provided")
-
-        nspe1 = len(neighspe1)
-        keys_array = np.zeros(((nang1+1)*len(species)*nspe1,4),int)
-        i = 0
-        for l in range(nang1+1):
-            for specen in species:
-                for speneigh in neighspe1:
-                    keys_array[i] = np.array([l,1,atomic_numbers[specen],atomic_numbers[speneigh]],int)
-                    i += 1
-
-        keys_selection = Labels(
-            names=["o3_lambda","o3_sigma","center_type","neighbor_type"],
-            values=keys_array
-        )
-
-        spx = calculator.compute(structure, selected_keys=keys_selection)
-        spx = spx.keys_to_properties("neighbor_type")
-        spx = spx.keys_to_samples("center_type")
-
-        # Get 1st set of coefficients as a complex numpy array
-        omega1 = np.zeros((nang1+1,natoms[iconf],2*nang1+1,nspe1*nrad1),complex)
-        for l in range(nang1+1):
-            c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
-            omega1[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx.block(o3_lambda=l).values)
-
-        if rep2=="rho":
-            # get SPH expansion for atomic density
-            calculator = SphericalExpansion(**HYPER_PARAMETERS_DENSITY)
-
-        elif rep2=="V":
-            # get SPH expansion for atomic potential
-            calculator = LodeSphericalExpansion(**HYPER_PARAMETERS_POTENTIAL)
-
-        else:
-            if rank == 0: print("Error: requested representation", rep2, "not provided")
-
-        nspe2 = len(neighspe2)
-        keys_array = np.zeros(((nang2+1)*len(species)*nspe2,4),int)
-        i = 0
-        for l in range(nang2+1):
-            for specen in species:
-                for speneigh in neighspe2:
-                    keys_array[i] = np.array([l,1,atomic_numbers[specen],atomic_numbers[speneigh]],int)
-                    i += 1
-
-        keys_selection = Labels(
-            names=["o3_lambda","o3_sigma","center_type","neighbor_type"],
-            values=keys_array
-        )
-
-        spx_pot = calculator.compute(structure, selected_keys=keys_selection)
-        spx_pot = spx_pot.keys_to_properties("neighbor_type")
-        spx_pot = spx_pot.keys_to_samples("center_type")
-
-        # Get 2nd set of coefficients as a complex numpy array 
-        omega2 = np.zeros((nang2+1,natoms[iconf],2*nang2+1,nspe2*nrad2),complex)
-        for l in range(nang2+1):
-            c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
-            omega2[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx_pot.block(o3_lambda=l).values)
+        # Reshape arrays of expansion coefficients for optimal Fortran indexing
+        v1 = np.transpose(omega1,(2,0,3,1))
+        v2 = np.transpose(omega2,(2,0,3,1))
 
         # Compute equivariant features for the given structure
         power = {}
         for lam in range(lmax_max+1):
 
-            # Select relevant angular components for equivariant descriptor calculation
-            llmax = 0
-            lvalues = {}
-            for l1 in range(nang1+1):
-                for l2 in range(nang2+1):
-                    # keep only even combination to enforce inversion symmetry
-                    if (lam+l1+l2)%2==0 :
-                        if abs(l2-lam) <= l1 and l1 <= (l2+lam) :
-                            lvalues[llmax] = [l1,l2]
-                            llmax+=1
-            # Fill dense array from dictionary
-            llvec = np.zeros((llmax,2),int)
-            for il in range(llmax):
-                llvec[il,0] = lvalues[il][0]
-                llvec[il,1] = lvalues[il][1]
+            [llmax,llvec] = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
 
             # Load the relevant Wigner-3J symbols associated with the given triplet (lam, lmax1, lmax2)
             wigner3j = np.loadtxt(os.path.join(
                 saltedpath, "wigners", f"wigner_lam-{lam}_lmax1-{nang1}_lmax2-{nang2}.dat"
             ))
             wigdim = wigner3j.size
-
-            # Reshape arrays of expansion coefficients for optimal Fortran indexing
-            v1 = np.transpose(omega1,(2,0,3,1))
-            v2 = np.transpose(omega2,(2,0,3,1))
 
             # Compute complex to real transformation matrix for the given lambda value
             c2r = sph_utils.complex_to_real_transformation([2*lam+1])[0]
@@ -273,7 +164,7 @@ def build():
                 power[lam] = p.reshape(natoms[iconf],2*lam+1,featsize)
 
         # Compute kernels and projected RKHS features
-        Psi = {}
+        Psi:Dict[Tuple[int, str], np.ndarray] = {}
         ispe = {}
         for spe in species:
             ispe[spe] = 0
@@ -314,19 +205,26 @@ def build():
         srows = arraylist()
         scols = arraylist()
         psi_nonzero = arraylist()
+        # srows:List[np.ndarray] = []
+        # scols:List[np.ndarray] = []
+        # psi_nonzero:List[np.ndarray] = []
         i = 0
         for iat in range(natoms[iconf]):
             spe = atomic_symbols[iconf][iat]
             for l in range(lmax[spe]+1):
                 i1 = ispe[spe]*(2*l+1)
-                i2 = ispe[spe]*(2*l+1)+2*l+1
-                x = Psi[(spe,l)][i1:i2]
-                nz = np.nonzero(x)
-                vals = x[x!=0]
+                i2 = ispe[spe]*(2*l+1) + 2*l+1
+                x = Psi[(spe,l)][i1:i2]  # 2d array
+                nz = np.nonzero(x)  # rwo 0: non-zero row indices, row 1: non-zero column indices
+                # vals = x[x!=0]
+                vals = x[nz]  # 1d array
                 for n in range(nmax[(spe,l)]):
                     psi_nonzero.update(vals)
                     srows.update(nz[0]+i)
                     scols.update(nz[1]+cuml_Mcut[(spe,l,n)])
+                    # psi_nonzero.append(vals)
+                    # srows.append(nz[0] + i)
+                    # scols.append(nz[1] + cuml_Mcut[(spe,l,n)])
                     i += 2*l+1
             ispe[spe] += 1
 
@@ -334,6 +232,11 @@ def build():
         srows = srows.finalize()
         scols = scols.finalize()
         ij = np.vstack((srows,scols))
+        # psi_nonzero = np.concatenate(psi_nonzero, axis=0)
+        # ij = np.vstack((
+        #     np.concatenate(srows, axis=0),
+        #     np.concatenate(scols, axis=0)
+        # ))
 
         del srows
         del scols

@@ -19,7 +19,7 @@ from salted.sys_utils import ParseConfig, get_atom_idx, get_conf_range, read_sys
 def build():
 
     inp = ParseConfig().parse_input()
-    (saltedname, saltedpath,
+    (saltedname, saltedpath, saltedtype,
     filename, species, average, field, parallel,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data,
@@ -27,7 +27,7 @@ def build():
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
+    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
     # MPI information
     if parallel:
@@ -77,8 +77,13 @@ def build():
         else:
             exit()
     dataset = list(range(ndata))
-    random.Random(3).shuffle(dataset)
-    trainrangetot = dataset[:Ntrain]
+    if trainsel=="sequential":
+        trainrangetot = dataset[:Ntrain]
+    elif trainsel=="random":
+        random.Random(3).shuffle(dataset)
+        trainrangetot = dataset[:Ntrain]
+    else:
+        raise ValueError(f"training set selection {trainsel=} not available!")
     if rank == 0:
         np.savetxt(osp.join(
             saltedpath, rdir, f"training_set_N{Ntrain}.txt"

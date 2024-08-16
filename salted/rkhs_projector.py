@@ -1,32 +1,20 @@
 """
-TODO: replace class arraylist by numpy.concatenate
+Calculate RKHS projection matrix
 """
 
 import os
-import sys
-import time
-import os.path as osp
-from ase.io import read
+
 import h5py
-
 import numpy as np
-from scipy import sparse
-from ase.data import atomic_numbers
 
-from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range
-
-from salted import wigner
-from salted import sph_utils
-from salted import basis
-
-from salted.lib import equicomb
+from salted.sys_utils import ParseConfig, get_atom_idx, read_system
 
 
 def build():
-    inp = ParseConfig().parse_input()
+    # inp = ParseConfig().parse_input()  # not used for now
 
     # salted parameters
-    (saltedname, saltedpath,
+    (saltedname, saltedpath, saltedtype,
     filename, species, average, field, parallel,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data,
@@ -34,16 +22,16 @@ def build():
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
+    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
-    sdir = osp.join(saltedpath, f"equirepr_{saltedname}")
+    sdir = os.path.join(saltedpath, f"equirepr_{saltedname}")
 
     # compute rkhs projector and save
-    features = h5py.File(osp.join(sdir,f"FEAT_M-{Menv}.h5"),'r')
-    h5f = h5py.File(osp.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w')
+    features = h5py.File(os.path.join(sdir,f"FEAT_M-{Menv}.h5"),'r')
+    h5f = h5py.File(os.path.join(sdir,  f"projector_M{Menv}_zeta{zeta}.h5"), 'w')
     for spe in species:
         power_env_sparse = features['sparse_descriptors'][spe]['0'][:]
         Mspe = power_env_sparse.shape[0]

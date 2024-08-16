@@ -2,13 +2,12 @@ import os
 import os.path as osp
 import sys
 import time
+from typing import Dict, List
 
 import h5py
 import numpy as np
 from ase.data import atomic_numbers
 from ase.io import read
-from metatensor import Labels
-from rascaline import LodeSphericalExpansion, SphericalExpansion
 from scipy import special
 
 from salted import basis, sph_utils
@@ -18,15 +17,15 @@ from salted.sys_utils import (
     ParseConfig,
     get_atom_idx,
     get_conf_range,
+    get_feats_projs,
     read_system,
-    get_feats_projs
 )
 
 
 def build():
 
     inp = ParseConfig().parse_input()
-    (saltedname, saltedpath,
+    (saltedname, saltedpath, saltedtype,
     filename, species, average, field, parallel,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data,
@@ -34,7 +33,7 @@ def build():
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel) = ParseConfig().get_all_params()
+    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
     if filename_pred == PLACEHOLDER or predname == PLACEHOLDER:
         raise ValueError(
@@ -62,8 +61,9 @@ def build():
     ndata_true = ndata
     if parallel:
         conf_range = get_conf_range(rank,size,ndata,list(range(ndata)))
-        conf_range = comm.scatter(conf_range,root=0)
+        conf_range = comm.scatter(conf_range,root=0)  # List[int]
         ndata = len(conf_range)
+        natmax = max(natoms[conf_range])
         print(f"Task {rank+1} handles the following structures: {conf_range}", flush=True)
     else:
         conf_range = list(range(ndata))
@@ -125,106 +125,13 @@ def build():
 
     start = time.time()
 
-    HYPER_PARAMETERS_DENSITY = {
-        "cutoff": rcut1,
-        "max_radial": nrad1,
-        "max_angular": nang1,
-        "atomic_gaussian_width": sig1,
-        "center_atom_weight": 1.0,
-        "radial_basis": {"Gto": {"spline_accuracy": 1e-6}},
-        "cutoff_function": {"ShiftedCosine": {"width": 0.1}},
-    }
-
-    HYPER_PARAMETERS_POTENTIAL = {
-        "potential_exponent": 1,
-        "cutoff": rcut2,
-        "max_radial": nrad2,
-        "max_angular": nang2,
-        "atomic_gaussian_width": sig2,
-        "center_atom_weight": 1.0,
-        "radial_basis": {"Gto": {"spline_accuracy": 1e-6}}
-    }
-
     frames = read(filename_pred,":")
     frames = [frames[i] for i in conf_range]
 
     if rank == 0: print(f"The dataset contains {ndata_true} frames.")
 
-    if rep1=="rho":
-        # get SPH expansion for atomic density
-        calculator = SphericalExpansion(**HYPER_PARAMETERS_DENSITY)
-
-    elif rep1=="V":
-        # get SPH expansion for atomic potential
-        calculator = LodeSphericalExpansion(**HYPER_PARAMETERS_POTENTIAL)
-
-    else:
-        if rank == 0:
-            raise ValueError(f"Unknown representation {rep1=}, expected 'rho' or 'V'")
-        else:
-            exit()
-
-    nspe1 = len(neighspe1)
-    keys_array = np.zeros(((nang1+1)*len(species)*nspe1,4),int)
-    i = 0
-    for l in range(nang1+1):
-        for specen in species:
-            for speneigh in neighspe1:
-                keys_array[i] = np.array([l,1,atomic_numbers[specen],atomic_numbers[speneigh]],int)
-                i += 1
-
-    keys_selection = Labels(
-        names=["o3_lambda","o3_sigma","center_type","neighbor_type"],
-        values=keys_array
-    )
-
-    spx = calculator.compute(frames, selected_keys=keys_selection)
-    spx = spx.keys_to_properties("neighbor_type")
-    spx = spx.keys_to_samples("center_type")
-
-    # Get 1st set of coefficients as a complex numpy array
-    omega1 = np.zeros((nang1+1,natoms_total,2*nang1+1,nspe1*nrad1),complex)
-    for l in range(nang1+1):
-        c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
-        omega1[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx.block(o3_lambda=l).values)
-
-    if rep2=="rho":
-        # get SPH expansion for atomic density
-        calculator = SphericalExpansion(**HYPER_PARAMETERS_DENSITY)
-
-    elif rep2=="V":
-        # get SPH expansion for atomic potential
-        calculator = LodeSphericalExpansion(**HYPER_PARAMETERS_POTENTIAL)
-
-    else:
-        if rank == 0:
-            raise ValueError(f"Unknown representation {rep2=}, expected 'rho' or 'V'")
-        else:
-            exit()
-
-    nspe2 = len(neighspe2)
-    keys_array = np.zeros(((nang2+1)*len(species)*nspe2,4),int)
-    i = 0
-    for l in range(nang2+1):
-        for specen in species:
-            for speneigh in neighspe2:
-                keys_array[i] = np.array([l,1,atomic_numbers[specen],atomic_numbers[speneigh]],int)
-                i += 1
-
-    keys_selection = Labels(
-        names=["o3_lambda","o3_sigma","center_type","neighbor_type"],
-        values=keys_array
-    )
-
-    spx_pot = calculator.compute(frames, selected_keys=keys_selection)
-    spx_pot = spx_pot.keys_to_properties("neighbor_type")
-    spx_pot = spx_pot.keys_to_samples("center_type")
-
-    # Get 2nd set of coefficients as a complex numpy array
-    omega2 = np.zeros((nang2+1,natoms_total,2*nang2+1,nspe2*nrad2),complex)
-    for l in range(nang2+1):
-        c2r = sph_utils.complex_to_real_transformation([2*l+1])[0]
-        omega2[l,:,:2*l+1,:] = np.einsum('cr,ard->acd',np.conj(c2r.T),spx_pot.block(o3_lambda=l).values)
+    omega1 = sph_utils.get_representation_coeffs(frames,rep1,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe1,species,nang1,nrad1,natoms_total)
+    omega2 = sph_utils.get_representation_coeffs(frames,rep2,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe2,species,nang2,nrad2,natoms_total)
 
     # Reshape arrays of expansion coefficients for optimal Fortran indexing
     v1 = np.transpose(omega1,(2,0,3,1))
@@ -269,21 +176,7 @@ def build():
 
         if rank == 0: print(f"lambda = {lam}")
 
-        # Select relevant angular components for equivariant descriptor calculation
-        llmax = 0
-        lvalues = {}
-        for l1 in range(nang1+1):
-            for l2 in range(nang2+1):
-                # keep only even combination to enforce inversion symmetry
-                if (lam+l1+l2)%2==0 :
-                    if abs(l2-lam) <= l1 and l1 <= (l2+lam) :
-                        lvalues[llmax] = [l1,l2]
-                        llmax+=1
-        # Fill dense array from dictionary
-        llvec = np.zeros((llmax,2),int)
-        for il in range(llmax):
-            llvec[il,0] = lvalues[il][0]
-            llvec[il,1] = lvalues[il][1]
+        [llmax,llvec] = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
 
         # Load the relevant Wigner-3J symbols associated with the given triplet (lam, lmax1, lmax2)
         wigner3j = np.loadtxt(osp.join(
@@ -321,6 +214,12 @@ def build():
             for iat in range(natoms[iconf]):
                 pvec[lam][i,iat] = p[j]
                 j += 1
+
+    """ save descriptor of the prediction dataset """
+    if inp.prediction.save_descriptor:
+        if rank == 0:
+            print(f"Saving descriptor of the prediction dataset to dir {dirpath}")
+        save_pred_descriptor(pvec, conf_range, list(natoms[conf_range]), dirpath)
 
 #    if parallel:
 #        comm.Barrier()
@@ -461,6 +360,41 @@ def build():
 
     if rank == 0: print(f"\ntotal time: {(time.time()-start):.2f} s")
 
+
+def save_pred_descriptor(data:Dict[int, np.ndarray], config_range:List[int], natoms:List[int], dpath:str):
+    """Save the descriptor data of the prediction dataset.
+
+    Args:
+        data (Dict[int, np.ndarray]): the descriptor data to be saved.
+            int -> lambda value,
+            np.ndarray -> descriptor data, shape (ndata, natmax, [2*lambda+1,] featsize)
+                natmax should be cut to the number of atoms in the structure (natoms[i])
+                2*lambda+1 is only for lambda > 0.
+        config_range (List[int]): the indices of the structures in the full dataset.
+        natoms (List[int]): the number of atoms in each structure. Should be the same length as config_range.
+        dpath (str): the directory to save the descriptor data.
+
+    Output:
+        The descriptor data of each structure is saved in a separate npz file in the directory dpath named as
+        "descriptor_{i}.npz", where i starts from 1.
+        Format: npz file with keys as lambda values and values as the descriptor data.
+            Values have shape (natom, [2*lambda+1,] featsize). 2*lambda+1 is only for lambda > 0.
+    """
+    assert len(config_range) == len(natoms), f"The length of config_range and natoms should be the same, " \
+        f"but get {config_range=} and {natoms=}."
+    for lam, data_this_lam in data.items():
+        assert data_this_lam.shape[0] == len(config_range), \
+            f"The first dimension of the descriptor data should be the same as the length of config_range, " \
+            f"but at {lam=} get {data_this_lam.shape[0]=} and {len(config_range)=}."
+
+    """ cut natmax to the number of atoms in the structure """
+    for idx, idx_in_full_dataset in enumerate(config_range):
+        this_data:Dict[int, np.ndarray] = dict()
+        this_natoms = natoms[idx]
+        for lam, data_this_lam in data.items():
+            this_data[f"lam{lam}"] = data_this_lam[idx, :this_natoms]  # shape (natom, [2*lambda+1,] featsize)
+        with open(osp.join(dpath, f"descriptor_{idx_in_full_dataset+1}.npz"), "wb") as f:  # index starts from 1
+            np.savez(f, **this_data)
 
 
 if __name__ == "__main__":
