@@ -39,11 +39,11 @@ JOBTYPES = {
     "Training" : {
         "job-name": "Training",
         "output": "output.%A.txt",
-        "time": "0-04:00:00",
+        "time": "0-12:00:00",
         "cpus-per-task": 1,
         "ntasks": 30,
         "nodes": 1,
-        "partition": "c23ms",
+        "partition": "c23mm",
         "account": "thes1689"
     },
 }

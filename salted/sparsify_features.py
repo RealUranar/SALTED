@@ -12,8 +12,30 @@ from ase.io import read
 from salted import sph_utils
 from salted import basis
 
-from salted.lib import equicomb, antiequicomb
+from salted.lib import equicomb, antiequicomb, equicombfps
 from salted.sys_utils import ParseConfig, read_system, get_atom_idx, get_conf_range, do_fps
+
+def select_frames_for_fps(ndata, nsamples, forced_Indices=None):
+    conf_range = list(range(ndata))
+    random.Random(3).shuffle(conf_range)
+
+    if nsamples <= ndata:
+        ndata = nsamples
+    else:
+        print("ERROR: nsamples cannot be greater than ndata!", flush=True, file=sys.stdout)
+        sys.exit(1)
+
+    conf_range = conf_range[:ndata]
+    
+    if forced_Indices is not None and len(forced_Indices) > 0:
+        for i in forced_Indices:
+            if i not in conf_range:
+                conf_range.append(i)
+                conf_range.pop(0)
+                
+    print(f"Selected {ndata} frames.", flush=True, file=sys.stdout)
+    return conf_range, ndata
+
 
 def build():
 
@@ -27,6 +49,8 @@ def build():
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
     gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
+
+    nsamples, ncut, forced_indices = ParseConfig().get_sparsify_params()
 
     # Generate directories for saving descriptors
     sdir = osp.join(saltedpath, f"equirepr_{saltedname}")
@@ -63,6 +87,7 @@ def build():
     v1 = np.transpose(omega1,(2,0,3,1))
     v2 = np.transpose(omega2,(2,0,3,1))
 
+    del omega1, omega2
     # Compute equivariant descriptors for each lambda value entering the SPH expansion of the electron density
     for lam in range(lmax_max+1):
 
@@ -79,32 +104,35 @@ def build():
 
         # compute normalized equivariant descriptor
         featsize = nspe1*nspe2*nrad1*nrad2*llmax
-        p = equicomb.equicomb(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
-        p = np.transpose(p,(2,0,1))
+        # p = equicomb.equicomb(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
+        # p = np.transpose(p,(2,0,1))
 
-        print(f"feature space size = {featsize}" , flush=True, file=sys.stdout)
+        # print(f"feature space size = {featsize}" , flush=True, file=sys.stdout)
 
-        #TODO modify SALTED to directly deal with compact natoms_total dimension
-        if lam==0:
-            p = p.reshape(natoms_total,featsize)
-            pvec = np.zeros((ndata,natmax,featsize))
-        else:
-            p = p.reshape(natoms_total,2*lam+1,featsize)
-            pvec = np.zeros((ndata,natmax,2*lam+1,featsize))
+        # #TODO modify SALTED to directly deal with compact natoms_total dimension
+        # if lam==0:
+        #     p = p.reshape(natoms_total,featsize)
+        #     pvec = np.zeros((ndata,natmax,featsize))
+        # else:
+        #     p = p.reshape(natoms_total,2*lam+1,featsize)
+        #     pvec = np.zeros((ndata,natmax,2*lam+1,featsize))
 
-        j = 0
-        for i in range(ndata):
-            for iat in range(natoms[i]):
-                pvec[i,iat] = p[j]
-                j += 1
+        # j = 0
+        # for i in range(ndata):
+        #     for iat in range(natoms[i]):
+        #         pvec[i,iat] = p[j]
+        #         j += 1
 
-        # Do feature selection with FPS sparsification
-        if ncut >= featsize:
-            ncut = featsize
+        # # Do feature selection with FPS sparsification
+        # if ncut >= featsize:
+        #     ncut = featsize
 
-        print("fps...")
-        pvec = pvec.reshape(ndata*natmax*(2*lam+1),featsize)
-        vfps = do_fps(pvec.T,ncut)
+        # print("fps...")
+        # pvec = pvec.reshape(ndata*natmax*(2*lam+1),featsize)
+        # vfps = do_fps(pvec.T,ncut)
+        
+        pvec = equicombfps.equicombfps(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
+        vfps = do_fps(pvec,ncut)
         np.save(osp.join(sdir, f"fps{ncut}-{lam}.npy"), vfps)
 
         if saltedtype=="density-response" and lam>0 and lam<lmax_max:

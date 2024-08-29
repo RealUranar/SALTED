@@ -4,9 +4,9 @@ import os.path as osp
 
 import numpy as np
 from ase.io import read
-from pyscf import gto
+from pyscf import gto, lib
 from salted import basis  # WARNING: relative import
-from salted.pyscf.get_basis_info import get_aux_basis_name
+from salted.pyscf.get_basis_info import get_aux_basis_name, read_basis
 from salted.pyscf.run_pyscf import run_pyscf
 from salted.sys_utils import ParseConfig, parse_index_str, ARGHELP_INDEX_STR
 
@@ -30,11 +30,15 @@ for iconf in conf_list:
         atoms.append([symb[i],(coord[0],coord[1],coord[2])])
 
     # Get PySCF objects for wave-function and density-fitted basis
-    dm = run_pyscf(atoms, inp.qm.qmbasis, inp.qm.functional, inp.qm.solvent_eps ,verbose=4)
+    dm = run_pyscf(atoms = atoms, basis = inp.qm.qmbasis, dfBasis=inp.qm.dfbasis, xc= inp.qm.functional, solvent_eps = inp.qm.solvent_eps ,verbose=4)
     
-    mol = gto.M(atom=atoms,basis=inp.qm.qmbasis, unit='angstrom', max_memory=12000)
     ribasis = get_aux_basis_name(inp.qm.qmbasis)
-    auxmol = gto.M(atom=atoms,basis=ribasis)
+    try:
+        mol = gto.M(atom=atoms,basis=inp.qm.qmbasis, unit='angstrom', max_memory=12000)
+        auxmol = gto.M(atom=atoms,basis=ribasis, unit='angstrom')
+    except lib.exceptions.BasisNotFoundError:
+        mol = gto.M(atom=atoms,basis=read_basis(inp.qm.qmbasis, species=set([a[0] for a in atoms])), unit='angstrom', max_memory=12000)
+        auxmol = gto.M(atom=atoms,basis=read_basis(ribasis, species=set([a[0] for a in atoms])), unit='angstrom')
     pmol = mol + auxmol
     
     print("Computing density-fitted coefficients...")

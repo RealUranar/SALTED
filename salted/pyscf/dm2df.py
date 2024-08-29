@@ -29,8 +29,8 @@ def cal_df_coeffs_old(
     nmax: Dict[Tuple[str, int], int],
 ):
     pyscf_time = time.time()
-    mol = gto.M(atom=atoms, basis=qmbasis)
-    auxmol = gto.M(atom=atoms, basis=ribasis)
+    mol = gto.M(atom=atoms, basis=qmbasis, unit='angstrom')
+    auxmol = gto.M(atom=atoms, basis=ribasis, unit='angstrom')
     pmol = mol + auxmol
     assert dm.shape[0] == mol.nao_nr(), f"{dm.shape=}, {mol.nao_nr()=}"
 
@@ -109,8 +109,8 @@ def cal_df_coeffs(
     irreps: Irreps,
 ):
     pyscf_time = time.time()
-    mol = gto.M(atom=atoms, basis=qmbasis)
-    auxmol = gto.M(atom=atoms, basis=ribasis)
+    mol = gto.M(atom=atoms, basis=qmbasis, unit='angstrom')
+    auxmol = gto.M(atom=atoms, basis=ribasis, unit='angstrom')
     pmol = mol + auxmol
     assert dm.shape[0] == mol.nao_nr(), f"{dm.shape=}, {mol.nao_nr()=}"
 
