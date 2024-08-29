@@ -63,6 +63,7 @@ salted/lib/antiequicombsparse.so: src/antiequicombsparse.f90
 
 salted/lib/equicombfps.so: src/equicombfps.f90
 	cd salted/lib; $(F2PYEXE) -c --opt=$(F2PYOPT) ../../src/equicombfps.f90 -m equicombfps --fcompiler=$(FCOMPILER) --f90flags=$(F90FLAGS) $(LIBS); mv equicombfps.*.so equicombfps.so
+	
 #salted/lib/gausslegendre.so: src/gausslegendre.f90
 #	cd salted/lib; $(F2PYEXE) -c --opt=$(F2PYOPT) ../../src/gausslegendre.f90 -m gausslegendre --fcompiler=$(FCOMPILER) --f90flags=$(F90FLAGS) $(LIBS); mv gausslegendre.*.so gausslegendre.so
 #
