@@ -1,4 +1,5 @@
 import os, sys
+from salted import pack_model
 from salted.sys_utils import (
     ParseConfig,
     read_system,
@@ -54,5 +55,6 @@ elif arg == "model":
         # f"--transform 's|wigners/|Model/wigners/|' "
         f"$(find wigners/ -type f -name 'wigner_lam-*_lmax1-{inp.descriptor.rep1.nang}_lmax2-{inp.descriptor.rep2.nang}.dat')"
     )
-
-    os.system(cmd)
+    
+elif arg == "modelh5":
+    pack_model.build()
