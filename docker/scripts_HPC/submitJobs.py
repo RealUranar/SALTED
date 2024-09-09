@@ -28,18 +28,18 @@ JOBTYPES = {
     "PySCF" : {
         "job-name": "PySCF",
         "output": "output.%A.%a.txt",
-        "time": "0-00:20:00",
+        "time": "0-00:40:00",
         "cpus-per-task": 8,
         "ntasks": 1,
         "nodes": 1,
-        "partition": "c23ms",
+        "partition": "c23mm",
         "account": "thes1689",
         "array": "0-999",
     },
     "Training" : {
         "job-name": "Training",
         "output": "output.%A.txt",
-        "time": "0-12:00:00",
+        "time": "1:00:00:00",
         "cpus-per-task": 1,
         "ntasks": 30,
         "nodes": 1,
@@ -69,19 +69,19 @@ def writeSubmitScripts(jobtype):
     script += "\n########## end of batch directives #########\n"
     script += 'echo "Starting job $SLURM_JOB_ID array ID $SLURM_ARRAY_TASK_ID"\n'
     if jobtype == "PySCF":
-        script += "apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif python -m salted.pyscf.run_pyscf -i ${SLURM_ARRAY_TASK_ID}\n"
-        script += "apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif python -m salted.pyscf.dm2df_pyscf -i ${SLURM_ARRAY_TASK_ID}\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif python -m salted.pyscf.run_pyscf -i ${SLURM_ARRAY_TASK_ID}\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif python -m salted.pyscf.dm2df_pyscf -i ${SLURM_ARRAY_TASK_ID}\n"
         script += "cat output.${SLURM_ARRAY_JOB_ID}.${SLURM_ARRAY_TASK_ID}.txt >> output.${SLURM_ARRAY_JOB_ID}.txt\n"
         script += "rm output.${SLURM_ARRAY_JOB_ID}.${SLURM_ARRAY_TASK_ID}.txt\n"
     elif jobtype == "Training":
         nproc = JOBTYPES[jobtype]["ntasks"]
-        script += "apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif python  -m salted.initialize\n"
-        script += "apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif python  -m salted.sparse_selection\n"
-        script += f"apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS  python -m salted.sparse_descriptor\n"
-        script += f"apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif python -m salted.rkhs_projector\n"
-        script += f"apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS  python -m salted.rkhs_vector\n"
-        script += f"apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS 	python 	-m salted.minimize_loss\n" 
-        script += f"apptainer exec --bind=$HPCWORK --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS 	python 	-m salted.validation"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif python  -m salted.initialize\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif python  -m salted.sparse_selection\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS  python -m salted.sparse_descriptor\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif python -m salted.rkhs_projector\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS  python -m salted.rkhs_vector\n"
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS 	python 	-m salted.minimize_loss\n" 
+        script += "apptainer exec --bind=$HPCWORK --bind=/hpcwork/thes1689 --bind=/work/thes1689 --no-home $HPCWORK/apptainers/salted.sif mpirun -np $SLURM_NTASKS 	python 	-m salted.validation"
 
     with open(f"submit_{jobtype}.sh", "w") as f:
         f.write(script)
