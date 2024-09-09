@@ -468,6 +468,7 @@ class ParseConfig:
                 "field": (False, False, bool, None),  # if predict the field response
                 "parallel": (False, False, bool, None),  # if use mpi4py
                 "seed": (False, 42, int, None),  # random seed
+                "allow_skip": (False, False, bool, None),  # if allow skipping the calculation if a associated file exists
             },
             "qm": {
                 "path2qm": (True, None, str, lambda inp, val: check_path_exists(val)),  # path to the QM calculation outputs

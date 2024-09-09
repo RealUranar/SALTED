@@ -29,7 +29,9 @@ def build():
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
     gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
-
+    
+    inp = ParseConfig().parse_input()
+    
     if parallel:
         from mpi4py import MPI
         # MPI information
@@ -110,7 +112,9 @@ def build():
     frames = read(filename,":")
 
     for iconf in conf_range:
-
+        #If the associated file already exists, skip the computation
+        if inp.system.allow_skip and os.path.exists(osp.join(saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}.npz")):
+            continue
         start_time = time.time()
         print(f"{iconf} start", file=sys.stdout, flush=True)
 
