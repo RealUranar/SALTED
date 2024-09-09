@@ -130,8 +130,9 @@ def build():
         # print("fps...")
         # pvec = pvec.reshape(ndata*natmax*(2*lam+1),featsize)
         # vfps = do_fps(pvec.T,ncut)
-        
+        start = time.perf_counter_ns()
         pvec = equicombfps.equicombfps(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
+        print(f"Time taken for equicombfps: {(time.perf_counter_ns()-start)/1e6:.2f} ms")
         vfps = do_fps(pvec,ncut)
         np.save(osp.join(sdir, f"fps{ncut}-{lam}.npy"), vfps)
 
