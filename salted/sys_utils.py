@@ -714,6 +714,12 @@ class ParseConfig:
                     str,
                     lambda inp, val: check_with_qmcode(inp, val, "pyscf"),
                 ),  # quantum mechanical functional, only for PySCF
+                "solvent_eps" : (
+                    False,
+                    PLACEHOLDER,
+                    str,
+                    lambda inp, val: check_with_qmcode(inp, val, "pyscf"),
+                ),
                 "pseudocharge": (
                     False,
                     PLACEHOLDER,
@@ -788,6 +794,11 @@ class ParseConfig:
                         int,
                         lambda inp, val: (val == 0) or (val > 0),
                     ),  # number of features to keep
+                    "forced_indices": (
+                        False,
+                        [],
+                        list,
+                        None), # indices to force inclusion in the sparsified set
                 },
             },
             "gpr": {

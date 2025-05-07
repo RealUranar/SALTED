@@ -199,7 +199,6 @@ def pack_weights(SALTED_file, path, inp):
 def pack_model_info(SALTED_file, inp):
     inputs = {
         b"averg": inp.system.average,  #Bools
-        b"field": inp.system.field,
         b"spars": inp.descriptor.sparsify.ncut > 0,
         b"ncut\0": inp.descriptor.sparsify.ncut,  #int32
         b"nang1": inp.descriptor.rep1.nang,

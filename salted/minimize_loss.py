@@ -99,7 +99,7 @@ def build():
         for spe in species:
             av_coefs[spe] = np.load(
                 os.path.join(
-                    saltedpath, "coefficients", "averages", f"averages_{spe}.npy"
+                    saltedpath, "averages", f"averages_{spe}.npy"
                 )
             )
 
@@ -176,7 +176,8 @@ def build():
 
                 ref_coefs = np.load(
                     osp.join(
-                        saltedpath,
+                        saltedpath, 
+                        inp.qm.path2qm,
                         "coefficients",
                         f"coefficients_conf{trainrange[iconf]}.npy",
                     )
@@ -267,7 +268,7 @@ def build():
 
                 # load reference QM data
                 ref_coefs = np.load(osp.join(
-                    saltedpath, "coefficients", f"coefficients_conf{trainrange[iconf]}.npy"
+                    saltedpath, inp.qm.path2qm, "coefficients", f"coefficients_conf{trainrange[iconf]}.npy"
                 ))
 
                 if average:
@@ -306,7 +307,7 @@ def build():
 
                     # load reference QM data
                     ref_coefs = np.load(osp.join(
-                        saltedpath, "coefficients", f"{icart}/coefficients_conf{trainrange[iconf]}.npy"
+                        saltedpath, inp.qm.path2qm, "coefficients", f"{icart}/coefficients_conf{trainrange[iconf]}.npy"
                     ))
 
                     # rebuild predicted coefficients
@@ -388,7 +389,7 @@ def build():
     psi_list = []
     for iconf in trainrange:
         ovlp_list.append(
-            np.load(osp.join(saltedpath, "overlaps", f"overlap_conf{iconf}.npy"))
+            np.load(osp.join(saltedpath, inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"))
         )
         # load feature vector as a scipy sparse object
         if saltedtype=="density":

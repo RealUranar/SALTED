@@ -50,7 +50,7 @@ def build():
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
     gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
-    nsamples, ncut, forced_indices = ParseConfig().get_sparsify_params()
+    forced_indices = inp.descriptor.sparsify.forced_indices
 
     # Generate directories for saving descriptors
     sdir = osp.join(saltedpath, f"equirepr_{saltedname}")
