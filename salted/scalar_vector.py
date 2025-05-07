@@ -23,9 +23,9 @@ def build():
     inp = ParseConfig().parse_input()
     # salted parameters
     (saltedname, saltedpath, saltedtype,
-    filename, species, average, field, parallel,
+    filename, species, average, parallel,
     path2qm, qmcode, qmbasis, dfbasis,
-    filename_pred, predname, predict_data,
+    filename_pred, predname, predict_data, alpha_only,
     rep1, rcut1, sig1, nrad1, nang1, neighspe1,
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
@@ -55,7 +55,7 @@ def build():
     conf_range = range(ndata)
 
     lam = 0
-    [llmax,llvec] = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
+    llmax, llvec = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
 
     # Load the relevant Wigner-3J symbols associated with the given triplet (lam, lmax1, lmax2)
     wigner3j = np.loadtxt(os.path.join(
