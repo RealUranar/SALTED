@@ -9,7 +9,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > installRust.sh \
     && chmod 700 installRust.sh \
     && ./installRust.sh -y \
     && source $HOME/.cargo/env \
-    && pip install 'rascaline @ git+https://github.com/Luthaf/rascaline.git'
+    && pip install git+https://github.com/metatensor/featomic.git
                                                                             
 #Install OpenMP
 RUN wget https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.2.tar.bz2 \
