@@ -1,1 +1,5 @@
 *.so
+build/*
+*.egg-info
+dm
+salted/cython/dm2df_fast_reorder.c
