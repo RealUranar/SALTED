@@ -32,7 +32,7 @@ def build():
                            avcoefs[spe][n] += coefs[i]
                         i += 1
 
-    adir = os.path.join(inp.salted.saltedpath,"coefficients", "averages")
+    adir = os.path.join(inp.salted.saltedpath, "coefficients", "averages")
     if not osp.exists(adir):
         os.mkdir(adir)
 

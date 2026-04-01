@@ -1,10 +1,10 @@
 SUBROUTINE equicomb(natoms,nang1,nang2,nrad1,nrad2,v1,v2,&
                     wigdim,w3j,llmax,llvec,lam,c2r,featsize,p)
 
-! use omp_lib
+!use omp_lib
 IMPLICIT NONE
 INTEGER:: natoms,nang1,nang2,nrad1,nrad2,llmax,lam,wigdim,ifeat
-INTEGER:: iat,n1,n2,iwig,l1,l2,il,imu,im1,im2,mu,m1,m2,featsize, temp1, temp2
+INTEGER:: iat,n1,n2,iwig,l1,l2,il,imu,im1,im2,mu,m1,m2,featsize
 INTEGER, DIMENSION(2,llmax):: llvec
 REAL*8, DIMENSION(wigdim):: w3j
 REAL*8, DIMENSION(2*lam+1):: preal
@@ -30,41 +30,6 @@ REAL*8:: inner, normfact
 !f2py depend(featsize) p 
 
 p = 0.d0
-
-! if(natoms .le. 0) then
-!    print*, "Error: Number of atoms must be greater than zero."
-!    stop
-! else
-!    print*, "Number of atoms: ", natoms
-! endif
-
-! if(size(v1, dim=3) .lt. nrad1) then
-!    print*, "Error: Number of radial functions must be greater than limit nrad1."
-!    stop
-! else
-!    print*, "Number of radial functions 1: ", nrad1
-! endif
-! if(size(v2, dim=3) .lt. nrad2) then
-!    print*, "Error: Number of radial functions must be greater than limit nrad2."
-!    stop
-! else
-!    print*, "Number of radial functions 2: ", nrad2
-! endif
-! temp1 = maxval(llvec(1,:))
-! if(size(v1, dim=2) .lt. temp1+1) then
-!    print*, "Error: Number of angular functions must be greater than limit nang1."
-!    stop
-! else
-!    print*, "Number of angular functions 1: ", nang1
-! endif
-! temp2 = maxval(llvec(2,:))
-! if(size(v2, dim=2) .lt. temp2+1) then
-!    print*, "Error: Number of angular functions must be greater than limit nang1."
-!    stop
-! else
-!    print*, "Number of angular functions 2: ", nang2
-! endif
-
 
 !$OMP PARALLEL DEFAULT(private) &
 !$OMP FIRSTPRIVATE(natoms,nang1,nang2,nrad1,nrad2,w3j,llmax,llvec,lam,c2r,featsize) &

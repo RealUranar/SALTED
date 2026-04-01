@@ -78,7 +78,7 @@ def build():
         # Load spherical averages 
         av_coefs = {}
         for spe in species:
-            av_coefs[spe] = np.load(os.path.join(saltedpath, "averages", f"averages_{spe}.npy"))
+            av_coefs[spe] = np.load(os.path.join(saltedpath, "coefficients", "averages", f"averages_{spe}.npy"))
 
     if qmcode=="cp2k":
         from ase.io import read
@@ -100,7 +100,7 @@ def build():
     for iconf in testrange:
 
         overl = np.load(osp.join(
-            saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"
+            saltedpath,inp.qm.path2qm, "coefficients" ,"overlaps", f"overlap_conf{iconf}.npy"
         ))
 
         if saltedtype=="density":

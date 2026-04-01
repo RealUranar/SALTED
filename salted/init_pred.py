@@ -24,12 +24,7 @@ def build(rank):
     sparsify = True if inp.descriptor.sparsify.ncut > 0 else False
   
     # read basis
-    if inp.qm.qmcode=="pyscf":
-        from salted.pyscf.get_basis_info import get_aux_basis_name
-        [lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qm.qmbasis))
-    else:
-        [lmax,nmax] = basis.basiset(inp.qm.dfbasis)
-
+    [lmax,nmax] = basis.basiset(inp.qm.dfbasis)
     llist = []
     nlist = []
     for spe in species:

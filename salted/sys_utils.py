@@ -44,9 +44,6 @@ def read_system(filename: str = None, spelist: List[str] = None, dfbasis: str = 
         filename = inp.system.filename
         spelist = inp.system.species
         dfbasis = inp.qm.dfbasis
-        if inp.qm.qmcode=="pyscf":
-            from salted.pyscf.get_basis_info import get_aux_basis_name
-            dfbasis = get_aux_basis_name(dfbasis)
     elif (filename is not None) and (spelist is not None) and (dfbasis is not None):
         pass
     else:
@@ -578,9 +575,6 @@ class ParseConfig:
         ```
         """
         inp = self.parse_input()
-        if inp.qm.qmcode=="pyscf":
-            from salted.pyscf.get_basis_info import get_aux_basis_name
-            inp.qm.df_basis = get_aux_basis_name(inp.qm.qmbasis)
         sparsify = False if inp.descriptor.sparsify.ncut <= 0 else True  # determine if sparsify by ncut
         nspe1 = len(inp.descriptor.rep1.neighspe)
         nspe2 = len(inp.descriptor.rep2.neighspe)
@@ -839,12 +833,6 @@ class ParseConfig:
                     str,
                     get_qmcode_checker("pyscf"),
                 ),  # quantum mechanical functional, only for PySCF
-                "solvent_eps" : (
-                    False,
-                    PLACEHOLDER,
-                    str,
-                    lambda inp, val: check_with_qmcode(inp, val, "pyscf"),
-                ),
                 "pseudocharge": (
                     False,
                     PLACEHOLDER,
@@ -919,11 +907,6 @@ class ParseConfig:
                         int,
                         lambda inp, val: (val == 0) or (val > 0),
                     ),  # number of features to keep
-                    "forced_indices": (
-                        False,
-                        [],
-                        list,
-                        None), # indices to force inclusion in the sparsified set
                 },
             },
             "gpr": {

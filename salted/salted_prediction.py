@@ -103,7 +103,7 @@ def build(lmax,nmax,lmax_max,weights,power_env_sparse,Mspe,Vmat,vfps,charge_inte
     pvec = {}
     for lam in range(min(lmax_max,lcut)+1):
     
-        print("lambda =", lam)
+#        print("lambda =", lam)
     
         equistart = time.time()
     
@@ -217,7 +217,7 @@ def build(lmax,nmax,lmax_max,weights,power_env_sparse,Mspe,Vmat,vfps,charge_inte
     if average:
         av_coefs = {}
         for spe in species:
-            av_coefs[spe] = np.load(os.path.join(saltedpath, "averages", f"averages_{spe}.npy"))
+            av_coefs[spe] = np.load(os.path.join(saltedpath, "coefficients", "averages", f"averages_{spe}.npy"))
     
     Tsize = 0
     for iat in range(natoms):

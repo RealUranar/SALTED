@@ -20,7 +20,7 @@ for i in range(len(spelist)):
     spe_dict[i] = spelist[i]
 
 # read basis
-[lmax,nmax] = basis.basiset(inp.qmbasis)
+[lmax,nmax] = basis.basiset(inp.qm.dfbasis)
 
 
 llist = []

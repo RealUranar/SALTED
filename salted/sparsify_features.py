@@ -15,28 +15,6 @@ from salted import basis
 from salted.lib import equicombfps
 from salted.sys_utils import ParseConfig, do_fps, get_atom_idx, read_system
 
-def select_frames_for_fps(ndata, nsamples, forced_Indices=None):
-    conf_range = list(range(ndata))
-    random.Random(3).shuffle(conf_range)
-
-    if nsamples <= ndata:
-        ndata = nsamples
-    else:
-        print("ERROR: nsamples cannot be greater than ndata!", flush=True, file=sys.stdout)
-        sys.exit(1)
-
-    conf_range = conf_range[:ndata]
-    
-    if forced_Indices is not None and len(forced_Indices) > 0:
-        for i in forced_Indices:
-            if i not in conf_range:
-                conf_range.append(i)
-                conf_range.pop(0)
-                
-    print(f"Selected {ndata} frames.", flush=True, file=sys.stdout)
-    return conf_range, ndata
-
-
 def build():
 
     inp = ParseConfig().parse_input()
@@ -71,9 +49,19 @@ def build():
     start = time.time()
 
     ndata_true = ndata
-    print(f"The dataset contains {ndata_true} frames.", flush=True, file=sys.stdout)
+    print(f"The dataset contains {ndata_true} frames.")
 
-    conf_range, ndata = select_frames_for_fps(ndata, nsamples, forced_indices)
+    conf_range = list(range(ndata_true))
+    random.Random(3).shuffle(conf_range)
+
+    if nsamples <= ndata:
+        ndata = nsamples
+    else:
+        print("ERROR: nsamples cannot be greater than ndata!")
+        sys.exit(1)
+
+    conf_range = conf_range[:ndata]
+    print(f"Selected {ndata} frames.")
 
     frames = read(filename,":")
     frames = list( frames[i] for i in conf_range )

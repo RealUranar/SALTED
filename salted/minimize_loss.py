@@ -154,7 +154,7 @@ def build():
 
                 ref_coefs = np.load(
                     osp.join(
-                        saltedpath, 
+                        saltedpath,
                         "coefficients",
                         f"coefficients_conf{trainrange[iconf]}.npy",
                     )
