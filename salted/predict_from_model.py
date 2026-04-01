@@ -16,11 +16,9 @@ from typing import Dict, Tuple, List
 from ase.io import read
 from ase.data import atomic_numbers
 
-import read_model
-
 # Import SALTED modules for feature computation
 try:
-    from salted import sph_utils
+    from salted import sph_utils, read_model
     from salted.lib import equicomb, equicombsparse
     from salted import basis
 except ImportError:
