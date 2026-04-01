@@ -11,16 +11,19 @@ from ase.io import read
 from scipy import special
 
 from salted import basis, sph_utils
-from salted.lib import equicomb, equicombsparse, equicombnonorm, antiequicombnonorm, kernelequicomb, kernelnorm
+from salted.lib import equicombnonorm, antiequicombnonorm, kernelequicomb, kernelnorm
 from salted.sys_utils import (
     PLACEHOLDER,
     ParseConfig,
+    check_MPI_tasks_count,
+    detect_mpi,
+    distribute_jobs,
+    format_index_ranges,
     get_atom_idx,
-    get_conf_range,
     get_feats_projs,
     get_feats_projs_response,
     read_system,
-    init_property_file
+    init_property_file,
 )
 from salted.cp2k.utils import init_moments, compute_charge_and_dipole, compute_polarizability
 
@@ -28,14 +31,14 @@ def build():
 
     inp = ParseConfig().parse_input()
     (saltedname, saltedpath, saltedtype,
-    filename, species, average, parallel,
+    filename, species, average,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data, alpha_only,
     rep1, rcut1, sig1, nrad1, nang1, neighspe1,
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
+    gradtol, restart, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
 
     if filename_pred == PLACEHOLDER or predname == PLACEHOLDER:
         raise ValueError(
@@ -43,31 +46,24 @@ def build():
             "please specify the entry named `prediction.filename` and `prediction.predname` in the input file."
         )
 
-    if parallel:
-        from mpi4py import MPI
-        # MPI information
-        comm = MPI.COMM_WORLD
-        size = comm.Get_size()
-        rank = comm.Get_rank()
-    #    print('This is task',rank+1,'of',size)
-    else:
-        rank = 0
-        size = 1
+    comm, size, rank, parallel = detect_mpi()
 
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system(filename_pred, species, dfbasis)
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
     bohr2angs = 0.529177210670
 
-    # Distribute structures to tasks
-    ndata_true = ndata
-    if rank == 0: print(f"The dataset contains {ndata_true} frames.")
+    if rank == 0:
+        print(f"The dataset contains {ndata} frames.")
+
+    # Initialize conf_range for both parallel and serial cases
     if parallel:
-        conf_range = get_conf_range(rank,size,ndata,list(range(ndata)))
-        conf_range = comm.scatter(conf_range,root=0)  # List[int]
-        ndata = len(conf_range)
+        check_MPI_tasks_count(comm, ndata, "predicting structures")
+        conf_range = distribute_jobs(comm, list(range(ndata)))
+        ndata = len(conf_range)  # update ndata for each mpi task
         natmax = max(natoms[conf_range])
-        print(f"Task {rank+1} handles the following structures: {conf_range}", flush=True)
+        if inp.salted.verbose:
+            print(f"Task {rank} handles the following structures: {format_index_ranges(conf_range,True)}", flush=True)
     else:
         conf_range = list(range(ndata))
     natoms_total = sum(natoms[conf_range])
@@ -106,7 +102,8 @@ def build():
                 cartpath = os.path.join(dirpath, f"{icart}")
                 if not os.path.exists(cartpath):
                     os.mkdir(cartpath)
-    if size > 1: comm.Barrier()
+    if parallel:
+        comm.Barrier()
 
     # Initialize files for derived properties 
     if qmcode=="cp2k":
@@ -129,8 +126,8 @@ def build():
     omega2 = sph_utils.get_representation_coeffs(frames,rep2,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe2,species,nang2,nrad2,natoms_total)
 
     # Reshape arrays of expansion coefficients for optimal Fortran indexing
-    v1 = np.transpose(omega1,(2,0,3,1))
-    v2 = np.transpose(omega2,(2,0,3,1))
+    v1 = np.transpose(omega1,(1,3,0,2)).copy()
+    v2 = np.transpose(omega2,(1,3,0,2)).copy()
     
     print("featomic time (sec) = ",time.time()-start_featomic,flush=True)
 
@@ -174,15 +171,13 @@ def build():
 
                 featsize = nspe1*nspe2*nrad1*nrad2*llmax
                 nfps = len(vfps[lam])
-                p = equicombsparse.equicombsparse(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize,nfps,vfps[lam])
-                p = np.transpose(p,(2,0,1))
+                p = sph_utils.equicombsparse_numba(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize,nfps,vfps[lam])
                 featsize = ncut
 
             else:
 
                 featsize = nspe1*nspe2*nrad1*nrad2*llmax
-                p = equicomb.equicomb(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
-                p = np.transpose(p,(2,0,1))
+                p = sph_utils.equicomb_numba(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize)
 
             # Fill vector of equivariant descriptor
             if lam==0:
@@ -270,14 +265,15 @@ def build():
             if average:
                 pred_coefs += Av_coeffs
 
-            # save predicted coefficients 
-            np.savetxt(osp.join(dirpath, f"COEFFS-{iconf+1}.dat"), pred_coefs)
-
             if qmcode=="cp2k":
                 # Compute charges and dipole moments
                 charge, dipole = compute_charge_and_dipole(frames[iconf],inp.qm.pseudocharge,natoms[iconf],atomic_symbols[iconf],lmax,nmax,species,charge_integrals,dipole_integrals,pred_coefs,average)
                 print(iconf+1,charge,file=qfile)
                 print(iconf+1,dipole["x"],dipole["y"],dipole["z"],file=dfile)
+            
+            # save predicted coefficients 
+            np.savetxt(osp.join(dirpath, f"COEFFS-{iconf+1}.dat"), pred_coefs)
+
     
     elif saltedtype=="density-response":
 
@@ -412,7 +408,8 @@ def build():
                 for ik in range(3):
                     psi_nm_cart[(cart[ik], spe, 0)][:natom_dict[(iconf,spe)]] = psi_nm_reshaped[:, ik]
 
-                print("kernel lam=0 time (sec) = ",time.time()-start_kernel_0,flush=True)
+                if inp.salted.verbose:
+                    print("kernel lam=0 time (sec) = ",time.time()-start_kernel_0,flush=True)
                 start_kernel_lam = time.time()
 
                 if alpha_only and qmcode=="cp2k":
@@ -524,7 +521,8 @@ def build():
                     for ik in range(3):
                         psi_nm_cart[(cart[ik], spe, lam)][:natom_dict[(iconf,spe)]*(2*lam+1)] = psi_nm_reshaped[:, ik]
 
-                print("kernel lam>0 time (sec) = ",time.time()-start_kernel_lam,flush=True)
+                if inp.salted.verbose:
+                    print("kernel lam>0 time (sec) = ",time.time()-start_kernel_lam,flush=True)
 
             start_pred = time.time()
 
@@ -567,7 +565,8 @@ def build():
                                alpha[("z","x")],    alpha[("z","y")],    alpha[("z","z")],
                                file=pfile)
 
-            print("prediction time (sec) = ",time.time()-start_pred,flush=True)
+            if inp.salted.verbose:
+                print("prediction time (sec) = ",time.time()-start_pred,flush=True)
 
     if qmcode == "cp2k":
         if saltedtype=="density":

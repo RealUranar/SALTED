@@ -1,8 +1,4 @@
-"""
-Calculate RKHS vectors
-"""
-
-import os, sys
+import os
 import os.path as osp
 import time
 from typing import Dict, List, Tuple
@@ -14,40 +10,36 @@ from ase.io import read
 from scipy import sparse
 
 from salted import sph_utils
-from salted.lib import equicomb, equicombsparse, antiequicomb, antiequicombsparse, equicombnonorm, antiequicombnonorm, kernelequicomb, kernelnorm
-from salted.sys_utils import ParseConfig, get_atom_idx, get_conf_range, get_feats_projs, get_feats_projs_response, read_system
+from salted.lib import (
+    equicomb, equicombsparse, antiequicomb, antiequicombsparse,
+    equicombnonorm, antiequicombnonorm, kernelequicomb, kernelnorm,
+)
+from salted.sys_utils import (
+    ParseConfig, check_MPI_tasks_count, detect_mpi, distribute_jobs,
+    format_index_ranges, get_atom_idx, get_feats_projs, get_feats_projs_response,
+    read_system,
+)
 
 def build():
 
+    inp = ParseConfig().parse_input()
+
     # salted parameters
     (saltedname, saltedpath, saltedtype,
-    filename, species, average, parallel,
+    filename, species, average,
     path2qm, qmcode, qmbasis, dfbasis,
     filename_pred, predname, predict_data, alpha_only,
     rep1, rcut1, sig1, nrad1, nang1, neighspe1,
     rep2, rcut2, sig2, nrad2, nang2, neighspe2,
     sparsify, nsamples, ncut,
     zeta, Menv, Ntrain, trainfrac, regul, eigcut,
-    gradtol, restart, blocksize, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
-    
-    inp = ParseConfig().parse_input()
-    
-    if parallel:
-        from mpi4py import MPI
-        # MPI information
-        comm = MPI.COMM_WORLD
-        size = comm.Get_size()
-        rank = comm.Get_rank()
-    #    print('This is task',rank+1,'of',size)
-    else:
-        rank=0
-        size=1
+    gradtol, restart, trainsel, nspe1, nspe2, HYPER_PARAMETERS_DENSITY, HYPER_PARAMETERS_POTENTIAL) = ParseConfig().get_all_params()
+
+    comm, size, rank, parallel = detect_mpi()
 
     species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system()
     atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
 
-    # TODO: replace class arraylist with numpy.concatenate
-    # define a numpy equivalent to an appendable list
     class arraylist:
         def __init__(self):
             self.data = np.zeros((100000,))
@@ -72,20 +64,22 @@ def build():
             return self.data[:self.size]
 
     fdir = f"rkhs-vectors_{saltedname}"
-    
+
     if (rank == 0):
         dirpath = os.path.join(saltedpath, fdir, f"M{Menv}_zeta{zeta}")
         if not os.path.exists(dirpath):
             os.makedirs(dirpath, exist_ok=True)
-    if size > 1:  comm.Barrier()
-
-    # Distribute structures to tasks
     if parallel:
-        conf_range = get_conf_range(rank,size,ndata,list(range(ndata)))
-        conf_range = comm.scatter(conf_range,root=0)
-        print('Task',rank+1,'handles the following structures:',conf_range, file=sys.stdout, flush=True)
+        comm.Barrier()
+
+    if parallel:
+        # Distribute structures to tasks
+        check_MPI_tasks_count(comm, ndata, "structures")
+        conf_range = distribute_jobs(comm, list(range(ndata)))
+        if inp.salted.verbose:
+            print(f"Task {rank} handles the following structures: {format_index_ranges(conf_range,True)}", flush=True)
     else:
-        conf_range = range(ndata)
+        conf_range = list(range(ndata))
 
     frames = read(filename,":")
 
@@ -116,7 +110,6 @@ def build():
         for iconf in conf_range:
 
             start_time = time.time()
-            print(f"{iconf} start", flush=True)
 
             structure = frames[iconf]
 
@@ -124,8 +117,8 @@ def build():
             omega2 = sph_utils.get_representation_coeffs(structure,rep2,HYPER_PARAMETERS_DENSITY,HYPER_PARAMETERS_POTENTIAL,rank,neighspe2,species,nang2,nrad2,natoms[iconf])
 
             # Reshape arrays of expansion coefficients for optimal Fortran indexing
-            v1 = np.transpose(omega1,(2,0,3,1))
-            v2 = np.transpose(omega2,(2,0,3,1))
+            v1 = np.transpose(omega1,(1,3,0,2)).copy()
+            v2 = np.transpose(omega2,(1,3,0,2)).copy()
 
             # Compute equivariant features for the given structure
             power = {}
@@ -147,15 +140,13 @@ def build():
 
                     featsize = nspe1*nspe2*nrad1*nrad2*llmax
                     nfps = len(vfps[lam])
-                    p = equicombsparse.equicombsparse(natoms[iconf],nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize,nfps,vfps[lam])
-                    p = np.transpose(p,(2,0,1))
+                    p = sph_utils.equicombsparse_numba(natoms[iconf],nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize,nfps,vfps[lam])
                     featsize = ncut
 
                 else:
  
                     featsize = nspe1*nspe2*nrad1*nrad2*llmax
-                    p = equicomb.equicomb(natoms[iconf],nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigdim,wigner3j,llmax,llvec.T,lam,c2r,featsize)
-                    p = np.transpose(p,(2,0,1))
+                    p = sph_utils.equicomb_numba(natoms[iconf],nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize)
 
                 # Fill vector of equivariant descriptor
                 if lam==0:
@@ -244,8 +235,8 @@ def build():
             del psi_nonzero
             del ij
 
-            end_time = time.time()
-            print(f"{iconf} end, time cost = {(end_time - start_time):.2f} s", flush=True)
+            if inp.salted.verbose:
+                print(f"conf {iconf}, time = {(time.time() - start_time):.2f} s", flush=True)
 
     elif saltedtype=="density-response":
 
@@ -270,7 +261,6 @@ def build():
         for iconf in conf_range:
 
             start_time = time.time()
-            print(f"{iconf} start", flush=True)
 
             structure = frames[iconf]
 
@@ -581,8 +571,8 @@ def build():
                 del psi_nonzero
                 del ij
 
-            end_time = time.time()
-            print(f"{iconf} end, time cost = {(end_time - start_time):.2f} s", flush=True)
+            if inp.salted.verbose:
+                print(f"conf {iconf}, time = {(time.time() - start_time):.2f} s", flush=True)
 
 if __name__ == "__main__":
     build()

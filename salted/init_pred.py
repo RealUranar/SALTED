@@ -10,7 +10,7 @@ from scipy import special
 from salted import basis
 from salted.sys_utils import ParseConfig, get_feats_projs
 
-def build():
+def build(rank):
 
     inp = ParseConfig().parse_input()
 
@@ -39,10 +39,11 @@ def build():
     lmax_max = max(llist)
 
     charge_integrals = {}
+    dipole_integrals = {}
     if inp.qm.qmcode=="cp2k":
         # Initialize calculation of density/density-response moments
         from salted.cp2k.utils import init_moments
-        charge_integrals,dipole_integrals = init_moments(inp,species,lmax,nmax,0)
+        charge_integrals,dipole_integrals = init_moments(inp,species,lmax,nmax,rank)
 
     loadstart = time.time()
    
@@ -63,9 +64,9 @@ def build():
         saltedpath, f"regrdir_{saltedname}", f"M{Menv}_zeta{zeta}", f"weights_N{ntrain}_reg{int(np.log10(reg))}.npy"
     ))
     
-    print("load time:", (time.time()-loadstart))
+    if inp.salted.verbose: print("load time:", (time.time()-loadstart))
     
-    return [lmax,nmax,lmax_max,weights,power_env_sparse,Mspe,Vmat,vfps,charge_integrals]
+    return [lmax,nmax,lmax_max,weights,power_env_sparse,Mspe,Vmat,vfps,charge_integrals,dipole_integrals]
 
 if __name__ == "__main__":
     build()
