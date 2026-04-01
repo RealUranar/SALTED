@@ -1,3 +1,0 @@
-Normal = cc-pvqz + x2c-qzvpall
-
-JKFIT  = cc-pvqz-jkfit + x2c-Jfit-universal

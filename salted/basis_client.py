@@ -91,7 +91,7 @@ class BasisClient:
         """
         if _dev_data_fpath is None:
             self.data_fpath = os.path.join(
-                self.DEFAULT_DATA_FNAME  #As i'm trying to run this inside a read only container, save this into the working directory
+                self.__salted_package_root, self.DEFAULT_DATA_FNAME
             )
         if _dev_data_fpath is None:
             # Try to place the dataset next to the salted package. If that directory is not writable

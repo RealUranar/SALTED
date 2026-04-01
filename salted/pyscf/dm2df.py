@@ -28,8 +28,8 @@ def cal_df_coeffs(
     irreps: Irreps,
 ):
     pyscf_time = time.time()
-    mol = gto.M(atom=atoms, basis=qmbasis, unit='angstrom')
-    auxmol = gto.M(atom=atoms, basis=ribasis, unit='angstrom')
+    mol = gto.M(atom=atoms, basis=qmbasis)
+    auxmol = gto.M(atom=atoms, basis=ribasis)
     pmol = mol + auxmol
     assert dm.shape[0] == mol.nao_nr(), f"{dm.shape=}, {mol.nao_nr()=}"
 
@@ -98,7 +98,7 @@ def main(geom_indexes: Union[List[int], None], num_threads: int = None):
     
     """check if all subdirectories exist, if not create them"""
     sub_dirs = [
-        osp.join(inp.qm.path2qm,inp.salted.saltedpath, d)
+        osp.join(inp.salted.saltedpath, d)
         for d in ("overlaps", "coefficients", "projections")
     ]
     for sub_dir in sub_dirs:

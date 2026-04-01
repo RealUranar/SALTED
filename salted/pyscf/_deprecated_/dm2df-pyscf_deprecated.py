@@ -5,16 +5,10 @@ import os.path as osp
 import time
 
 import numpy as np
-from pyscf import gto, df
+from pyscf import gto
 from ase.io import read
 from scipy import special
-import tqdm
 
-import glob, re
-import salted.cython.dm2df_fast_reorder as dm2df
-from salted.pyscf.get_basis_info import get_aux_basis_name
-
-debug = False
 from salted import basis
 from salted.sys_utils import ParseConfig
 
@@ -43,25 +37,16 @@ if iconf != -1:
 else:
     conf_list = range(ndata)
 
-
-#See if any structures already exist, if they do, do not compute again.
-alreadyCalculated = np.array([re.findall(r'\d+',s) for s in glob.glob(f"{osp.join(inp.path2qm, 'coefficients')}/*")], dtype=int).flatten()
-if len(alreadyCalculated) > 0:
-    print("Found existing calculations, resuming from before")
-    conf_list = list(conf_list)
-    for i in alreadyCalculated:
-        conf_list.remove(i)
-
 # read basis
-[lmax,nmax] = basis.basiset(get_aux_basis_name(inp.qmbasis))
+[lmax,nmax] = basis.basiset(inp.qm.dfbasis)
     
-dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "coefficients")
+dirpath = os.path.join(inp.system.saltedpath, "coefficients")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
-dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "projections")
+dirpath = os.path.join(inp.system.saltedpath, "projections")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
-dirpath = os.path.join(inp.system.saltedpath,inp.qm.path2qm, "overlaps")
+dirpath = os.path.join(inp.system.saltedpath, "overlaps")
 if not os.path.exists(dirpath):
     os.mkdir(dirpath)
 
@@ -71,8 +56,8 @@ print("Make sure to provide the density matrix following this convention!")
 print("---------------------------------------------------------------------------------")
 print("Reading geometry and basis sets...")
 
-sys.path.insert(0, "/usr/local/lib/python3.10/site-packages/salted/pyscf")
-for iconf in tqdm.tqdm(conf_list):
+start_time = time.time()
+for iconf in conf_list:
 
     # Initialize geometry
     geom = xyzfile[iconf]
@@ -85,12 +70,12 @@ for iconf in tqdm.tqdm(conf_list):
         atoms.append([symb[i],(coord[0],coord[1],coord[2])])
     
     # Get PySCF objects for wave-function and density-fitted basis
-    mol = gto.M(atom=atoms,basis=inp.qmbasis)
-    ribasis = df.addons.DEFAULT_AUXBASIS[gto.basis._format_basis_name(inp.qmbasis)][0]
+    mol = gto.M(atom=atoms,basis=inp.qm.qmbasis)
+    ribasis = inp.qm.qmbasis+" jkfit"
     auxmol = gto.M(atom=atoms,basis=ribasis)
     pmol = mol + auxmol
     
-    if debug: print("Computing overlap matrix...")
+    print("Computing overlap matrix...")
     
     # Get and save overlap matrix
     overlap = auxmol.intor('int1e_ovlp_sph')
@@ -162,9 +147,9 @@ for iconf in tqdm.tqdm(conf_list):
     Proj = np.dot(Over,Coef)
     
     # Save projections and overlaps
-    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "coefficients", f"coefficients_conf{iconf}.npy"), Coef)
-    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "projections", f"projections_conf{iconf}.npy"), Proj)
-    np.save(osp.join(inp.system.saltedpath,inp.qm.path2qm, "overlaps", f"overlap_conf{iconf}.npy"), Over)
+    np.save(osp.join(inp.system.saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"), Coef)
+    np.save(osp.join(inp.system.saltedpath, "projections", f"projections_conf{iconf}.npy"), Proj)
+    np.save(osp.join(inp.system.saltedpath, "overlaps", f"overlap_conf{iconf}.npy"), Over)
     
     # --------------------------------------------------
     

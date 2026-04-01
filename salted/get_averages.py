@@ -20,7 +20,7 @@ def build():
     print("computing averages...")
     for iconf in range(ndata):
         atoms = atomic_symbols[iconf]
-        coefs = np.load(os.path.join(inp.salted.saltedpath, inp.qm.path2qm,"coefficients", f"coefficients_conf{iconf}.npy"))
+        coefs = np.load(os.path.join(inp.salted.saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"))
         i = 0
         for iat in range(natoms[iconf]):
             spe = atoms[iat]
@@ -32,13 +32,13 @@ def build():
                            avcoefs[spe][n] += coefs[i]
                         i += 1
 
-    adir = os.path.join(inp.salted.saltedpath,"averages")
+    adir = os.path.join(inp.salted.saltedpath,"coefficients", "averages")
     if not osp.exists(adir):
         os.mkdir(adir)
 
     for spe in spelist:
         avcoefs[spe] /= nat_per_species[spe]
-        np.save(os.path.join(inp.salted.saltedpath, "averages", f"averages_{spe}.npy"), avcoefs[spe])
+        np.save(os.path.join(inp.salted.saltedpath, "coefficients", "averages", f"averages_{spe}.npy"), avcoefs[spe])
 
     return
 

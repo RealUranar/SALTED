@@ -48,7 +48,7 @@ def build():
             comm.Barrier()
         # load average density coefficients
         for spe in species:
-            av_coefs[spe] = np.load(os.path.join(saltedpath, "averages", f"averages_{spe}.npy"))
+            av_coefs[spe] = np.load(os.path.join(saltedpath, "coefficients", "averages", f"averages_{spe}.npy"))
 
     if parallel:
         comm.Barrier()

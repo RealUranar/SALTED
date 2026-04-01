@@ -21,9 +21,9 @@ from salted.sys_utils import (
 )
 
 def build():
-
+    
     inp = ParseConfig().parse_input()
-
+    
     # salted parameters
     (saltedname, saltedpath, saltedtype,
     filename, species, average,
