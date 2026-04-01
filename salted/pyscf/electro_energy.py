@@ -22,7 +22,6 @@ for i in range(len(spelist)):
 # read basis
 [lmax,nmax] = basis.basiset(inp.qm.dfbasis)
 
-
 llist = []
 nlist = []
 for spe in spelist:

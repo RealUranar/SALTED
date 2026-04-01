@@ -100,7 +100,7 @@ def build():
     for iconf in testrange:
 
         overl = np.load(osp.join(
-            saltedpath,inp.qm.path2qm, "coefficients" ,"overlaps", f"overlap_conf{iconf}.npy"
+            saltedpath, "overlaps", f"overlap_conf{iconf}.npy"
         ))
 
         if saltedtype=="density":
