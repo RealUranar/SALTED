@@ -19,7 +19,7 @@ types_dict = {
 }
 
 MAGIC_NUMBER = b"SALTD"
-SUPPORTED_VERSIONS = [2]
+SUPPORTED_VERSIONS = [1, 2]
 
 def read_key5(f) -> str:
     """Read a 5-byte key and strip null bytes"""

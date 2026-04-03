@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y \
     gfortran \
 	&& rm -rf /var/lib/apt/lists/*
 
-RUN pip install meson packaging \
+RUN pip install meson packaging numba \
     && pip install --prefer-binary pyscf
 
 #Install SALTED
