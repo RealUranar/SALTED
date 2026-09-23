@@ -10,7 +10,7 @@ import yaml
 from ase.io import read
 
 from salted.constants import bohr2angs
-from salted import basis
+from salted.basis_client import BasisClient
 
 
 def build_featomic_hyper_params(rep_cfg) -> dict:
@@ -122,7 +122,7 @@ def read_system(
     if basis_data is not None:
         [lmax, nmax] = _basis_from_embedded_model(basis_data, spelist)
     else:
-        [lmax, nmax] = basis.basiset(dfbasis)
+        [lmax, nmax] = BasisClient(data_fpath=inp.qm.dfbasis_file).read(dfbasis)
     llist = []
     nlist = []
     for spe in spelist:
@@ -772,6 +772,12 @@ class ParseConfig:
                     lambda inp, val: get_qmcode_checker("cp2k")(inp, val) and (val == PLACEHOLDER or val in ("identity", "coulomb")),
                 ),  # density fitting metric, only for CP2K
                 "dfbasis": (True, None, str, None),  # density fitting basis
+                "dfbasis_file": (
+                    False,
+                    None,
+                    (str, type(None)),
+                    check_optional_path_exists,
+                ),  # optional path to an external basis dataset yaml file
                 #### below are optional, but required for some qmcode ####
                 "qmbasis": (
                     False,
@@ -1033,6 +1039,16 @@ def check_path_exists(_, path: str) -> bool:
 
 
 check_path_exists.parse_error_msg = "Path (value) does not exist."
+
+
+def check_optional_path_exists(_, path: str | None) -> bool:
+    """Check an optional path field whose "unset" value is None.
+    None (unset) is allowed; otherwise the path must exist.
+    """
+    return path is None or os.path.exists(path)
+
+
+check_optional_path_exists.parse_error_msg = "Path (value) does not exist."
 
 
 def check_conditions_alpha_only(inp: dict, val: bool) -> bool:
