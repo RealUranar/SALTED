@@ -12,6 +12,7 @@ from sympy.physics.wigner import wigner_3j
 from salted.sph_utils import kernelequicomb, kernelnorm
 from salted import sph_utils
 from salted.sys_utils import ParseConfig, compute_Mcut, get_atom_idx, read_system, rkhs_proj
+from salted.selection_utils import load_training_indices
 
 
 def build():
@@ -25,8 +26,10 @@ def build():
     zeta = inp.gpr.z
     Menv = inp.gpr.Menv
 
-    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = read_system()
-    atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
+
+    train_indices = load_training_indices(inp)
+    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = read_system(conf_indices=train_indices)
+    atom_idx, natom_dict = get_atom_idx(ndata, natoms, species, atomic_symbols, conf_indices=train_indices)
 
     sdir = os.path.join(saltedpath, f"equirepr_{saltedname}")
 

@@ -313,7 +313,7 @@ def read_new_basis(filename: str, symbol: str) -> list[list]:
         last_shell = None
 
         for line in lines[1:]:
-            if line.startswith("#"):
+            if line.startswith("#") or line == "":
                 continue
             l_str, exp_str, coef_str, shell_str = [x.strip() for x in line.split(",")]
             l = int(l_str)

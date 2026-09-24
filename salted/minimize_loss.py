@@ -1,12 +1,14 @@
 import os
 import os.path as osp
-import random
 import time
 
 import numpy as np
+from ase.io import read
 from scipy import sparse
 
 from salted import get_averages
+from salted.psi_builder import PsiBuilder
+from salted.selection_utils import load_training_indices
 from salted.sys_utils import (
     ParseConfig,
     check_MPI_tasks_count,
@@ -19,7 +21,6 @@ from salted.sys_utils import (
 
 
 def build():
-
     inp = ParseConfig().parse_input()
     # frequently used parameters
     saltedname = inp.salted.saltedname
@@ -34,14 +35,23 @@ def build():
 
     comm, size, rank, parallel = detect_mpi()
 
+    # gpr.fast_minimizer (default true): Jacobi-preconditioned CG with
+    # buffer-based collectives. Same linear system, same gradtol, same
+    # solution - different iterate path, so set it false to bit-reproduce a
+    # model built before this existed.
+    fast_minimizer = bool(inp.gpr.fast_minimizer)
+    if parallel:
+        from mpi4py import MPI
+
     fdir = f"rkhs-vectors_{saltedname}"
     rdir = f"regrdir_{saltedname}"
 
-    species, lmax, nmax, llmax, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = (
-        read_system()
-    )
+    # data_selection.py is the single authority for Ntrain selection.
+    # The file stores ORIGINAL/global combined.xyz configuration indices.
+    train_indices = load_training_indices(inp)
+    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = read_system(conf_indices=train_indices)
 
-    atom_per_spe, natoms_per_spe = get_atom_idx(ndata, natoms, species, atomic_symbols)
+    atom_per_spe, natoms_per_spe = get_atom_idx(ndata, natoms, species, atomic_symbols, conf_indices=train_indices)
 
     # load average density coefficients if needed
     if average:
@@ -66,41 +76,16 @@ def build():
     if parallel:
         comm.Barrier()
 
-    # define training set at random
-    if Ntrain > ndata:
-        if rank == 0:
-            raise ValueError(
-                f"More training structures {Ntrain=} have been requested "
-                f"than are present in the input data {ndata=}."
-            )
-        else:
-            exit()
-    dataset = list(range(ndata))
-    if inp.gpr.trainsel == "sequential":
-        trainrangetot = dataset[:Ntrain]
-    elif inp.gpr.trainsel == "random":
-        random.Random(3).shuffle(dataset)
-        trainrangetot = dataset[:Ntrain]
-    else:
-        raise ValueError(f"training set selection {inp.gpr.trainsel} not available!")
-    if rank == 0:
-        np.savetxt(
-            osp.join(saltedpath, rdir, f"training_set_N{Ntrain}.txt"),
-            trainrangetot,
-            fmt="%i",
-        )
-    # trainrangetot = np.loadtxt("training_set.txt",int)
-
     # Distribute structures to tasks
-    ntraintot = round(inp.gpr.trainfrac * Ntrain)
+    ntraintot = int(inp.gpr.trainfrac * Ntrain)
 
     if parallel:
         check_MPI_tasks_count(comm, ntraintot, "training structures")
-        trainrange = distribute_jobs(comm, trainrangetot[:ntraintot])
+        trainrange = distribute_jobs(comm, train_indices[:ntraintot])
         if inp.salted.verbose:
             print(f"Task {rank} handles the following structures: {format_index_ranges(trainrange,True)}", flush=True)
     else:
-        trainrange = trainrangetot[:ntraintot]
+        trainrange = train_indices[:ntraintot]
     ntrain = int(len(trainrange))
 
     def loss_func(weights, ovlp_list, psi_list, coef_list):
@@ -257,14 +242,23 @@ def build():
                     itot += 1
 
         if parallel:
-            gradient = comm.allreduce(gradient) * norm + 2.0 * regul * weights
+            if fast_minimizer:
+                # Allreduce needs a contiguous float64 buffer; the sparse dots
+                # above can hand back a matrix type. Normalise before reducing.
+                gradient = np.ascontiguousarray(gradient, dtype=np.float64)
+                comm.Allreduce(MPI.IN_PLACE, gradient, op=MPI.SUM)
+            else:
+                gradient = comm.allreduce(gradient)
+            gradient = gradient * norm + 2.0 * regul * weights
         else:
             gradient *= norm
             gradient += 2.0 * regul * weights
         return gradient
 
+    PRECOND_BLK = 2048  # rows of psi^T per chunk; caps the dense temporary
+
     def precond_func(ovlp_list, psi_list):
-        """Compute preconditioning."""
+        """Diagonal (Jacobi) preconditioner: diag of 2 * sum_conf psi^T S psi."""
 
         #        global totsize
         totsize = psi_list[0].shape[1]
@@ -276,11 +270,16 @@ def build():
             # ovlp_times_psi = np.dot(ovlp_list[iconf],psi_vector)
             # diag_hessian += 2.0*np.sum(np.multiply(ovlp_times_psi,psi_vector),axis=0)
 
-            ovlp_times_psi = sparse.csc_matrix.dot(psi_list[iconf].T, ovlp_list[iconf])
-            temp = np.sum(
-                sparse.csc_matrix.multiply(psi_list[iconf].T, ovlp_times_psi), axis=1
-            )
-            diag_hessian += 2.0 * np.squeeze(np.asarray(temp))
+            psiT = psi_list[iconf].T.tocsr()
+            for beg in range(0, totsize, PRECOND_BLK):
+                end = min(beg + PRECOND_BLK, totsize)
+                blk = psiT[beg:end]
+                if blk.nnz == 0:
+                    continue
+                tmp = blk.dot(ovlp_list[iconf])
+                diag_hessian[beg:end] += 2.0 * np.asarray(
+                    blk.multiply(tmp).sum(axis=1)
+                ).ravel()
 
         # del psi_vector
 
@@ -309,12 +308,34 @@ def build():
                     itot += 1
         
         if parallel:
-            Ad = comm.allreduce(Ad) * norm + 2.0 * regul * cg_dire
+            if fast_minimizer:
+                # Buffer-based Allreduce, not the pickle-based lowercase one.
+                Ad = np.ascontiguousarray(Ad, dtype=np.float64)
+                comm.Allreduce(MPI.IN_PLACE, Ad, op=MPI.SUM)
+            else:
+                Ad = comm.allreduce(Ad)
+            Ad = Ad * norm + 2.0 * regul * cg_dire
         else:
             Ad *= norm
             Ad += 2.0 * regul * cg_dire
 
         return Ad
+
+    psi_builder = None
+    if inp.gpr.psi_in_memory:
+        if saltedtype != "density":
+            raise NotImplementedError(
+                f"gpr.psi_in_memory requires saltedtype='density', got {saltedtype!r}"
+            )
+        psi_builder = PsiBuilder(
+            rank,
+            system=(
+                species, lmax, nmax, lmax_max, nnmax, ndata,
+                atomic_symbols, atomic_coords, natoms, natmax,
+            ),
+            atom_info=(atom_per_spe, natoms_per_spe),
+        )
+        frames = read(inp.system.filename, ":")
 
     if rank == 0:
         print("loading matrices...")
@@ -327,7 +348,9 @@ def build():
         )
         # load feature vector as a scipy sparse object
         if saltedtype=="density":
-            psi_list.append(sparse.load_npz(osp.join(
+            # coo, matching what load_npz returns: csr would reorder the matvec sums
+            psi_list.append(psi_builder.build(iconf, frames[iconf]) if psi_builder
+                            else sparse.load_npz(osp.join(
               saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}.npz"
             )))
             coef_list.append(np.load(osp.join(
@@ -348,7 +371,30 @@ def build():
     start = time.time()
 
     # preconditioner
-    P = np.ones(totsize)
+    if fast_minimizer:
+        _tp = time.time()
+        diag_hessian = precond_func(ovlp_list, psi_list)
+        if parallel:
+            diag_hessian = np.ascontiguousarray(diag_hessian, dtype=np.float64)
+            comm.Allreduce(MPI.IN_PLACE, diag_hessian, op=MPI.SUM)
+        diag_hessian = diag_hessian * norm + 2.0 * regul
+        # Guard the inversion: a zero or negative diagonal would poison the
+        # search direction. Fall back to 1.0 for any such entry rather than
+        # producing inf/nan and a silently wrong model.
+        bad = ~(diag_hessian > 0.0)
+        if bad.any() and rank == 0:
+            print(f"WARNING: {int(bad.sum())} of {totsize} preconditioner "
+                  f"diagonal entries were non-positive; using 1.0 for those.",
+                  flush=True)
+        P = np.where(bad, 1.0, 1.0 / np.where(bad, 1.0, diag_hessian))
+        if rank == 0:
+            spread = diag_hessian[~bad].max() / diag_hessian[~bad].min()
+            print(f"Jacobi preconditioner active (gpr.fast_minimizer): "
+                  f"built in {time.time()-_tp:.1f} s, diag range "
+                  f"[{diag_hessian[~bad].min():.3e}, {diag_hessian[~bad].max():.3e}], "
+                  f"spread {spread:.1f}x", flush=True)
+    else:
+        P = np.ones(totsize)
 
     reg_log10_intstr = str(int(np.log10(regul)))  # for consistency
 

@@ -166,7 +166,6 @@ def get_representation_coeffs(
         nrad (int): number of radial basis functions.
         natoms (int): number of atoms in the structure.
     """
-
     if rep=="rho":
 
         # get SPH expansion for atomic density
@@ -613,11 +612,14 @@ def equicombsparse_numba(natoms,nang1,nang2,nrad1,nrad2,v1,v2,w3j,llmax,llvec,la
                         inner = inner + preal[imu]**2
                         ptemp[ifeat,imu] = preal[imu]
                     ifeat = ifeat + 1
-        normfact = np.sqrt(inner)
+        if inner == 0.0:
+            normfact = 0.0
+        else:
+            normfact = 1 / np.sqrt(inner)
         for n in range(nfps):
             ifps = vfps[n]
             for imu in range(2*lam+1):
-                p[iat,imu,n] = ptemp[ifps,imu] / normfact
+                p[iat,imu,n] = ptemp[ifps,imu] * normfact
     return p
 
 @njit(parallel=True, fastmath = True)
@@ -654,10 +656,13 @@ def equicomb_numba(natoms,nang1,nang2,nrad1,nrad2,v1,v2,w3j,llmax,llvec,lam,c2r,
                         inner = inner + preal[imu]**2
                         ptemp[ifeat,imu] = preal[imu]
                     ifeat = ifeat + 1
-        normfact = np.sqrt(inner)
+        if inner == 0.0:
+            normfact = 0.0
+        else:
+            normfact = 1 / np.sqrt(inner)
         for ifeat in range(featsize):
             for imu in range(2*lam+1):
-                p[iat,imu,ifeat] = ptemp[ifeat,imu] / normfact
+                p[iat,imu,ifeat] = ptemp[ifeat,imu] * normfact
     return p
 
 @njit(parallel=True, fastmath = True)
@@ -693,10 +698,13 @@ def equicombfps(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llvec, l
                         inner = inner + preal[imu]**2
                         ptemp[ifeat, imu] = preal[imu]
                     ifeat = ifeat + 1
-        normfact = np.sqrt(inner)
+        if inner == 0.0:
+            normfact = 0.0
+        else:
+            normfact = 1 / np.sqrt(inner)
         for ifeat in range(featsize):
             for imu in range(2*lam+1):
-                p[ifeat, iat*(2*lam+1) + imu] = ptemp[ifeat, imu] / normfact
+                p[ifeat, iat*(2*lam+1) + imu] = ptemp[ifeat, imu] * normfact
     
     return p
 

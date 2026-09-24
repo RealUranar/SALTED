@@ -3,11 +3,15 @@ import os
 import os.path as osp
 import re
 from typing import Literal
+import sys
 
 import h5py
 import numpy as np
 import yaml
+from ase import Atoms
 from ase.io import read
+
+from salted import basis
 
 from salted.constants import bohr2angs
 from salted.basis_client import BasisClient
@@ -80,6 +84,7 @@ def read_system(
     spelist: list[str] = None,
     dfbasis: str = None,
     basis_data: dict[str, dict] | None = None,
+    conf_indices: list[int] | np.ndarray | tuple[int, ...] | None = None,
 ):
     """read a geometry file and return the formatted information
 
@@ -134,40 +139,62 @@ def read_system(
 
     # read system
     xyzfile = read(filename, ":", parallel=False)
-    ndata = len(xyzfile)
-    
-    # Define system excluding atoms that belong to species not listed in SALTED input
-    atomic_symbols = []
+    ndata_total = len(xyzfile)
+
+    if conf_indices is None:
+        selected_indices = list(range(ndata_total))
+        selected_mode = False
+    else:
+        selected_indices = [int(i) for i in conf_indices]
+        selected_mode = True
+        if len(selected_indices) != len(set(selected_indices)):
+            raise ValueError("conf_indices contains duplicate configuration indices")
+        bad = [i for i in selected_indices if i < 0 or i >= ndata_total]
+        if bad:
+            raise IndexError(
+                f"Configuration indices outside geometry range 0..{ndata_total - 1}: {bad[:10]}"
+            )
+
+    ndata = len(selected_indices)
+
+    # In selected mode, keep metadata keyed by the ORIGINAL/global
+    # configuration IDs used by combined.xyz and the QM files.
+    if selected_mode:
+        atomic_symbols = {}
+        natoms = {}
+    else:
+        atomic_symbols = []
+        natoms = np.zeros(ndata, int)
+
     atomic_coords  = []
-    natoms = np.zeros(ndata, int)
-    for iconf in range(len(xyzfile)):
-        atomic_symbols.append(xyzfile[iconf].get_chemical_symbols())
-        natoms_total = len(atomic_symbols[iconf])
-        xyzfile[iconf].wrap()
+    for iconf in selected_indices:
+        symbols = xyzfile[iconf].get_chemical_symbols()
         atomic_coords.append( xyzfile[iconf].get_positions() / bohr2angs )
-        excluded_species = []
-        for iat in range(natoms_total):
-            spe = atomic_symbols[iconf][iat]
-            if spe not in spelist:
-                excluded_species.append(spe)
-        excluded_species = set(excluded_species)
+        excluded_species = {spe for spe in symbols if spe not in spelist}
         for spe in excluded_species:
-            mask = [s != spe for s in atomic_symbols[iconf]]
-            atomic_symbols[iconf] = list(filter(lambda a: a != spe, atomic_symbols[iconf]))
-            atomic_coords[iconf] = np.array(atomic_coords[iconf])[mask]
-        natoms[iconf] = int(len(atomic_symbols[iconf]))
+            symbols = list(filter(lambda a: a != spe, symbols))
+            atomic_coords = list(filter(lambda a: a != spe, atomic_coords))
+
+        if selected_mode:
+            atomic_symbols[iconf] = symbols
+        else:
+            atomic_symbols.append(symbols)
+            
+        natoms[iconf] = int(len(symbols))
 
     # Define maximum number of atoms
-    natmax = max(natoms)
+    natmax = max(natoms.values()) if selected_mode else max(natoms)
 
     return spelist, lmax, nmax, llmax, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax
 
 
-def get_atom_idx(ndata, natoms, spelist, atomic_symbols):
+def get_atom_idx(ndata, natoms, spelist, atomic_symbols, conf_indices=None):
     # initialize useful arrays
     atom_idx = {}
     natom_dict = {}
-    for iconf in range(ndata):
+    if conf_indices is None:
+        conf_indices = range(ndata)
+    for iconf in conf_indices:
         for spe in spelist:
             atom_idx[(iconf, spe)] = []
             natom_dict[(iconf, spe)] = 0
@@ -841,6 +868,16 @@ class ParseConfig:
                         int,
                         lambda inp, val: val > 0,
                     ),  # number of samples for sparsifying feature channel
+                    "samplesel": (
+                        False,
+                        "random",
+                        str,
+                        lambda inp, val: val in (
+                            "random",
+                            "equal_random",
+                            "equal_rmsd_fps",
+                        ),
+                    ),  # selection mode for the nsamples subset of Ntrain
                     "ncut": (
                         False,
                         0,
@@ -897,8 +934,36 @@ class ParseConfig:
                     False,
                     "random",
                     str,
-                    lambda inp, val: val in ("random", "sequential"),
-                ),  # if shuffle the training set
+                    lambda inp, val: val in (
+                        "random",
+                        "equal_random",
+                        "equal_rmsd_fps",
+                    ),
+                ),  # training-configuration selection mode
+                "psi_in_memory": (
+                    False,
+                    False,
+                    bool,
+                    lambda inp, val: isinstance(val, bool),
+                ),  # build the RKHS vectors in minimize_loss instead of reading rkhs_vector output
+                "fast_minimizer": (
+                    False,
+                    True,
+                    bool,
+                    lambda inp, val: isinstance(val, bool),
+                ),  # Jacobi-preconditioned CG + buffer-based collectives.
+                "charge_correction_mode": (
+                    False,
+                    1,
+                    int,
+                    lambda inp, val: isinstance(val, int) and 0 <= val <= 1,
+                ),  # electron-count constraint written into the .salted file:
+                    # 0 = off, 1 = scale the l=0 coefficients so the density
+                    # integrates to the exact count. Only VERSION 3 files carry
+                    # it; NoSpherA2 applies it, nothing changes during training.
+                    # Same linear system and same gradtol, so the same solution -
+                    # but a different iterate path, so NOT bit-identical to a model
+                    # built before this existed. Set false to reproduce one exactly.
                 "sparse_algorithm": (
                     False,
                     "numba",

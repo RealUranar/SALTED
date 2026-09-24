@@ -23,6 +23,7 @@ from salted.sys_utils import (
 from salted import wigner
 from salted import sph_utils
 from salted import basis
+from salted.selection_utils import load_training_indices
 
 from salted.sph_utils import equicombnonorm, antiequicombnonorm
 
@@ -48,8 +49,9 @@ def build():
 
     comm, size, rank, parallel = detect_mpi()
 
-    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = read_system()
-    atom_idx, natom_dict = get_atom_idx(ndata,natoms,species,atomic_symbols)
+    train_indices = load_training_indices(inp)
+    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, atomic_coords, natoms, natmax = read_system(conf_indices=train_indices)
+    atom_idx, natom_dict = get_atom_idx(ndata, natoms, species, atomic_symbols, conf_indices=train_indices)
 
     frames = read(inp.system.filename,":")
 
@@ -58,11 +60,11 @@ def build():
     # Distribute structures to tasks
     if parallel:
         check_MPI_tasks_count(comm, ndata)
-        conf_range = distribute_jobs(comm, list(range(ndata)))
+        conf_range = distribute_jobs(comm, train_indices)
         if inp.salted.verbose:
             print(f"Task {rank} handles the following structures: {format_index_ranges(conf_range,True)}", flush=True)
     else:
-        conf_range = list(range(ndata))
+        conf_range = train_indices
 
     sparse_set = np.loadtxt(osp.join(sdir, f"sparse_set_{Menv}.txt"),int)
     fps_idx = sparse_set[:,0]
@@ -73,13 +75,13 @@ def build():
         Mspe[spe] = 0
 
     fps_indexes_per_conf = {}
-    for iconf in range(ndata):
+    for iconf in train_indices:
         for spe in species:
             fps_indexes_per_conf[(iconf,spe)] = []
 
     itot = 0
     Midx_spe = {}
-    for iconf in range(ndata):
+    for iconf in train_indices:
         for spe in species:
             Midx_spe[(iconf,spe)] = Mspe[spe]
         for iat in range(natoms[iconf]):
@@ -113,6 +115,20 @@ def build():
                 else:
                     power_env_sparse[(spe,lam)] = np.zeros((Mspe[spe],(2*lam+1),featsize))
 
+        # lam-dependent only, so hoisted out of the per-structure loop below.
+        # The wigner loadtxt was costing one shared-filesystem open per structure
+        # per lambda: ndata x (lmax_max+1) = 49,245 opens for this model, on 16 KB
+        # of constants. Same values, read once. (rkhs_vector got the same fix via
+        # PsiBuilder; the two density-response loops below still have the pattern.)
+        per_lam = {}
+        for lam in range(lmax_max+1):
+            _llmax, _llvec = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
+            _wig = np.loadtxt(os.path.join(
+                saltedpath, "wigners", f"wigner_lam-{lam}_lmax1-{nang1}_lmax2-{nang2}.dat"
+            ))
+            _c2r = sph_utils.complex_to_real_transformation([2*lam+1])[0]
+            per_lam[lam] = (_llmax, _llvec, _wig, _c2r)
+
         for iconf in conf_range:
 
             start_time = time.time()
@@ -135,16 +151,7 @@ def build():
             # Compute equivariant features for the given structure
             for lam in range(lmax_max+1):
 
-                [llmax,llvec] = sph_utils.get_angular_indexes_symmetric(lam,nang1,nang2)
-
-                # Load the relevant Wigner-3J symbols associated with the given triplet (lam, lmax1, lmax2)
-                wigner3j = np.loadtxt(os.path.join(
-                    saltedpath, "wigners", f"wigner_lam-{lam}_lmax1-{nang1}_lmax2-{nang2}.dat"
-                ))
-                wigdim = wigner3j.size
-
-                # Compute complex to real transformation matrix for the given lambda value
-                c2r = sph_utils.complex_to_real_transformation([2*lam+1])[0]
+                llmax, llvec, wigner3j, c2r = per_lam[lam]
 
                 # Perform symmetry-adapted combination following Eq.S19 of Grisafi et al., PRL 120, 036002 (2018)
                 if sparsify:
