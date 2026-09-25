@@ -1,5 +1,7 @@
+import gc
 import os
 import os.path as osp
+import shutil
 import time
 
 import numpy as np
@@ -19,6 +21,158 @@ from salted.sys_utils import (
     read_system,
 )
 
+def _sparse_nbytes(mat):
+    """Bytes occupied by the numerical/index arrays of a scipy sparse matrix."""
+    total = 0
+    seen = set()
+    for name in ("data", "indices", "indptr", "row", "col"):
+        arr = getattr(mat, name, None)
+        if arr is not None and hasattr(arr, "nbytes") and id(arr) not in seen:
+            total += arr.nbytes
+            seen.add(id(arr))
+    return total
+
+
+def _save_npy(path, arr):
+    """Write one array as an uncompressed .npy suitable for mmap."""
+    np.save(path, np.asarray(arr), allow_pickle=False)
+
+
+def _save_sparse_for_mmap(mat, prefix):
+    """
+    Persist a scipy sparse matrix without changing its sparse format/order.
+
+    Returns a small in-memory descriptor.  Only COO/CSR/CSC are supported
+    intentionally: silently converting another sparse format could change
+    summation order and therefore numerical reproducibility.
+    """
+    if mat.getformat() != "coo":
+        raise TypeError(
+            f"mmap matrix storage currently supports only COO/CSR/CSC Psi matrices, "
+            f"got format {mat.getformat()!r}. Refusing an implicit conversion because it "
+            f"could change sparse summation order."
+        )
+    shape = tuple(int(x) for x in mat.shape)
+
+    paths = {
+        "data": f"{prefix}_data.npy",
+        "row": f"{prefix}_row.npy",
+        "col": f"{prefix}_col.npy",
+    }
+    _save_npy(paths["data"], mat.data)
+    _save_npy(paths["row"], mat.row)
+    _save_npy(paths["col"], mat.col)
+    return {
+        "shape": shape,
+        "paths": paths,
+        "bytes": _sparse_nbytes(mat),
+    }
+
+
+def _load_sparse_mmap(desc):
+    """
+    Reconstruct a scipy sparse matrix backed by read-only np.memmap arrays.
+
+    No sparse-format conversion is performed, so data/index ordering is the
+    same as when the matrix was cached.
+    """
+    p = desc["paths"]
+    data = np.load(p["data"], mmap_mode="r", allow_pickle=False)
+    row = np.load(p["row"], mmap_mode="r", allow_pickle=False)
+    col = np.load(p["col"], mmap_mode="r", allow_pickle=False)
+    return sparse.coo_matrix((data, (row, col)), shape=desc["shape"], copy=False)
+
+
+class MatrixStore:
+    """
+    Uniform access to overlap and Psi matrices for both storage strategies.
+
+    In "memory" mode get_overlap()/get_psi() return retained objects.
+
+    In "mmap" mode they create lightweight read-only mappings on demand.
+    The caller should keep only the returned local reference for the duration
+    of the current structure calculation.
+    """
+
+    def __init__(self, mode, saltedpath, rank):
+        mode = str(mode).strip().lower()
+        if mode not in ("memory", "mmap"):
+            raise ValueError(
+                "gpr.matrix_storage must be 'memory' or 'mmap', "
+                f"got {mode!r}"
+            )
+
+        self.mode = mode
+        self.rank = rank
+
+        self._overlap_paths = []
+        self._overlaps = []
+
+        self._psis = []
+        self._psi_desc = []
+
+        self.psi_cache_bytes = 0
+
+        if self.mode == "mmap":
+            cache_root = os.environ.get(
+                "SALTED_PSI_CACHE_DIR",
+                osp.join(saltedpath, ".psi_mmap_cache"),
+            )
+            self.cache_dir = osp.join(cache_root, f"rank_{rank:05d}")
+
+            # Node-local scratch is expected to be fresh for every job.  Remove
+            # only this rank's directory to avoid ever touching another rank.
+            shutil.rmtree(self.cache_dir, ignore_errors=True)
+            os.makedirs(self.cache_dir, exist_ok=True)
+        else:
+            self.cache_dir = None
+
+    def add_overlap(self, path):
+        if self.mode == "memory":
+            self._overlaps.append(
+                np.load(path, allow_pickle=False)
+            )
+        else:
+            # Do not map it yet.  Retain only its path.
+            self._overlap_paths.append(path)
+
+    def add_psi(self, mat, label):
+        if self.mode == "memory":
+            self._psis.append(mat)
+            return
+
+        prefix = osp.join(self.cache_dir, f"psi_{label}")
+        desc = _save_sparse_for_mmap(mat, prefix)
+        self._psi_desc.append(desc)
+        self.psi_cache_bytes += desc["bytes"]
+
+    def get_overlap(self, index):
+        if self.mode == "memory":
+            return self._overlaps[index]
+
+        return np.load(
+            self._overlap_paths[index],
+            mmap_mode="r",
+            allow_pickle=False,
+        )
+
+    def get_psi(self, index):
+        if self.mode == "memory":
+            return self._psis[index]
+
+        return _load_sparse_mmap(self._psi_desc[index])
+
+    def psi_shape(self, index=0):
+        if self.mode == "memory":
+            return self._psis[index].shape
+        return self._psi_desc[index]["shape"]
+
+    @property
+    def npsi(self):
+        if self.mode == "memory":
+            return len(self._psis)
+        return len(self._psi_desc)
+
 
 def build():
     inp = ParseConfig().parse_input()
@@ -32,6 +186,14 @@ def build():
     Ntrain = inp.gpr.Ntrain
     regul = inp.gpr.regul
     gradtol = inp.gpr.gradtol
+
+    # The caller will add this configuration field.
+    matrix_storage = str(inp.gpr.matrix_storage).strip().lower()
+    if matrix_storage not in ("memory", "mmap"):
+        raise ValueError(
+            "gpr.matrix_storage must be either 'memory' or 'mmap', "
+            f"got {matrix_storage!r}"
+        )
 
     comm, size, rank, parallel = detect_mpi()
 
@@ -55,12 +217,11 @@ def build():
 
     # load average density coefficients if needed
     if average:
-        # compute average density coefficients
         if rank == 0:
             get_averages.build()
         if parallel:
             comm.Barrier()
-        # load average density coefficients
+
         av_coefs = {}
         for spe in species:
             av_coefs[spe] = np.load(
@@ -71,8 +232,7 @@ def build():
 
     dirpath = os.path.join(saltedpath, rdir, f"M{Menv}_zeta{zeta}")
     if rank == 0:
-        if not os.path.exists(dirpath):
-            os.makedirs(dirpath, exist_ok=True)
+        os.makedirs(dirpath, exist_ok=True)
     if parallel:
         comm.Barrier()
 
@@ -86,23 +246,18 @@ def build():
             print(f"Task {rank} handles the following structures: {format_index_ranges(trainrange,True)}", flush=True)
     else:
         trainrange = train_indices[:ntraintot]
-    ntrain = int(len(trainrange))
 
-    def loss_func(weights, ovlp_list, psi_list, coef_list):
-        """Given the weight-vector of the RKHS, compute the gradient of the electron-density loss function."""
+    # A normal Python list is useful because it is indexed repeatedly below.
+    trainrange = list(trainrange)
+    ntrain = len(trainrange)
 
-        #        global totsize
-        totsize = psi_list[0].shape[1]
+    def loss_func(weights, matrices, coef_list):
+        """Compute the electron-density loss function."""
 
-        # init gradient
-        gradient = np.zeros(totsize)
+        loss = 0.0
 
-        if saltedtype=="density":
-
-            loss = 0.0
-            # loop over training structures
+        if saltedtype == "density":
             for iconf in range(ntrain):
-
                 ref_coefs = coef_list[iconf]
 
                 if average:
@@ -116,13 +271,14 @@ def build():
                                 Av_coeffs[i] = av_coefs[spe][n]
                             i += 2 * l + 1
 
-                # rebuild predicted coefficients
-                pred_coefs = sparse.csr_matrix.dot(psi_list[iconf], weights)
+                psi = matrices.get_psi(iconf)
+                ovlp = matrices.get_overlap(iconf)
+
+                # Same sparse operation/order as the previous implementation.
+                pred_coefs = sparse.csr_matrix.dot(psi, weights)
                 if average:
                     pred_coefs += Av_coeffs
 
-                # compute predicted density projections
-                ovlp = ovlp_list[iconf]
                 ref_projs = np.dot(ovlp, ref_coefs)
                 pred_projs = np.dot(ovlp, pred_coefs)
 
@@ -131,17 +287,16 @@ def build():
                     pred_coefs - ref_coefs, pred_projs - ref_projs
                 )
 
-        elif saltedtype=="density-response":
+                # In mmap mode these are the only live mappings for this
+                # structure.  CPython releases them immediately here.
+                del psi, ovlp
 
-            loss = 0.0
-            # loop over training structures
+        elif saltedtype == "density-response":
             itot = 0
             for iconf in range(ntrain):
+                ovlp = matrices.get_overlap(iconf)
 
-                ovlp = ovlp_list[iconf]
-
-                for icart in ["x","y","z"]:
-
+                for icart in ["x", "y", "z"]:
                     ref_coefs = np.load(
                         osp.join(
                             saltedpath,
@@ -150,18 +305,20 @@ def build():
                         )
                     )
 
-                    # rebuild predicted coefficients
-                    pred_coefs = sparse.csr_matrix.dot(psi_list[itot], weights)
+                    psi = matrices.get_psi(itot)
+                    pred_coefs = sparse.csr_matrix.dot(psi, weights)
 
-                    # compute predicted density projections
                     ref_projs = np.dot(ovlp, ref_coefs)
                     pred_projs = np.dot(ovlp, pred_coefs)
 
-                    # collect gradient contributions
                     loss += sparse.csc_matrix.dot(
                         pred_coefs - ref_coefs, pred_projs - ref_projs
                     )
+
+                    del psi
                     itot += 1
+
+                del ovlp
 
         loss *= norm
         if parallel:
@@ -172,20 +329,12 @@ def build():
 
         return loss
 
-    def grad_func(weights, ovlp_list, psi_list, coef_list):
-        """
-        Given the weight-vector of the RKHS, compute the gradient of the electron-density loss function.
-        """
+    def grad_func(weights, matrices, coef_list):
+        """Compute the gradient of the electron-density loss function."""
 
-        #        global totsize
-        totsize = psi_list[0].shape[1]
-
-        # init gradient
         gradient = np.zeros(totsize)
 
-        if saltedtype=="density":
-
-            # loop over training structures
+        if saltedtype == "density":
             for iconf in range(ntrain):
 
                 ref_coefs = coef_list[iconf]
@@ -199,47 +348,54 @@ def build():
                         for n in range(nmax[(spe,l)]):
                             if average and l==0:
                                 Av_coeffs[i] = av_coefs[spe][n]
-                            i += 2*l+1
+                            i += 2 * l + 1
 
-                # rebuild predicted coefficients
-                pred_coefs = sparse.csr_matrix.dot(psi_list[iconf],weights)
+                psi = matrices.get_psi(iconf)
+                ovlp = matrices.get_overlap(iconf)
+
+                pred_coefs = sparse.csr_matrix.dot(psi, weights)
                 if average:
                     pred_coefs += Av_coeffs
 
-                # compute predicted density projections
-                ovlp = ovlp_list[iconf]
-                ref_projs = np.dot(ovlp,ref_coefs)
-                pred_projs = np.dot(ovlp,pred_coefs)
+                ref_projs = np.dot(ovlp, ref_coefs)
+                pred_projs = np.dot(ovlp, pred_coefs)
 
-                # collect gradient contributions
-                gradient += 2.0 * sparse.csc_matrix.dot(psi_list[iconf].T,pred_projs-ref_projs)
-        
-        elif saltedtype=="density-response":
+                gradient += 2.0 * sparse.csc_matrix.dot(
+                    psi.T,
+                    pred_projs - ref_projs,
+                )
 
-            # loop over training structures
+                del psi, ovlp
+
+        elif saltedtype == "density-response":
             itot = 0
             for iconf in range(ntrain):
+                ovlp = matrices.get_overlap(iconf)
 
-                ovlp = ovlp_list[iconf]
- 
-                for icart in ["x","y","z"]:
+                for icart in ["x", "y", "z"]:
+                    ref_coefs = np.load(
+                        osp.join(
+                            saltedpath,
+                            "coefficients",
+                            f"{icart}/coefficients_conf{trainrange[iconf]}.npy",
+                        )
+                    )
 
-                    # load reference QM data
-                    ref_coefs = np.load(osp.join(
-                        saltedpath, "coefficients", f"{icart}/coefficients_conf{trainrange[iconf]}.npy"
-                    ))
+                    psi = matrices.get_psi(itot)
+                    pred_coefs = sparse.csr_matrix.dot(psi, weights)
 
-                    # rebuild predicted coefficients
-                    pred_coefs = sparse.csr_matrix.dot(psi_list[itot],weights)
+                    ref_projs = np.dot(ovlp, ref_coefs)
+                    pred_projs = np.dot(ovlp, pred_coefs)
 
-                    # compute predicted density projections
-                    ref_projs = np.dot(ovlp,ref_coefs)
-                    pred_projs = np.dot(ovlp,pred_coefs)
+                    gradient += 2.0 * sparse.csc_matrix.dot(
+                        psi.T,
+                        pred_projs - ref_projs,
+                    )
 
-                    # collect gradient contributions
-                    gradient += 2.0 * sparse.csc_matrix.dot(psi_list[itot].T,pred_projs-ref_projs)
-                    
+                    del psi
                     itot += 1
+
+                del ovlp
 
         if parallel:
             if fast_minimizer:
@@ -257,56 +413,74 @@ def build():
 
     PRECOND_BLK = 2048  # rows of psi^T per chunk; caps the dense temporary
 
-    def precond_func(ovlp_list, psi_list):
-        """Diagonal (Jacobi) preconditioner: diag of 2 * sum_conf psi^T S psi."""
+    def precond_func(matrices):
+        """Diagonal (Jacobi) preconditioner: diag(2 * sum psi^T S psi)."""
 
-        #        global totsize
-        totsize = psi_list[0].shape[1]
         diag_hessian = np.zeros(totsize)
 
         for iconf in range(ntrain):
+            psi = matrices.get_psi(iconf)
+            ovlp = matrices.get_overlap(iconf)
 
-            # psi_vector = psi_list[iconf].toarray()
-            # ovlp_times_psi = np.dot(ovlp_list[iconf],psi_vector)
-            # diag_hessian += 2.0*np.sum(np.multiply(ovlp_times_psi,psi_vector),axis=0)
+            # This is still the largest per-structure sparse temporary, but it
+            # is released before the next structure is mapped.
+            psiT = psi.T.tocsr()
 
-            psiT = psi_list[iconf].T.tocsr()
             for beg in range(0, totsize, PRECOND_BLK):
                 end = min(beg + PRECOND_BLK, totsize)
                 blk = psiT[beg:end]
                 if blk.nnz == 0:
+                    del blk
                     continue
-                tmp = blk.dot(ovlp_list[iconf])
+
+                tmp = blk.dot(ovlp)
                 diag_hessian[beg:end] += 2.0 * np.asarray(
                     blk.multiply(tmp).sum(axis=1)
                 ).ravel()
 
-        # del psi_vector
+                del tmp, blk
+
+            del psiT, psi, ovlp
 
         return diag_hessian
 
-    def curv_func(cg_dire, ovlp_list, psi_list):
-        """Compute curvature on the given CG-direction."""
+    def curv_func(cg_dire, matrices):
+        """Compute curvature on the given CG direction."""
 
-        totsize = psi_list[0].shape[1]
+        Ad = np.zeros(totsize)
 
-        Ad = np.zeros((totsize))
-
-        if saltedtype=="density":
-
+        if saltedtype == "density":
             for iconf in range(ntrain):
-                psi_x_dire = sparse.csr_matrix.dot(psi_list[iconf],cg_dire)
-                Ad += 2.0 * sparse.csc_matrix.dot(psi_list[iconf].T,np.dot(ovlp_list[iconf],psi_x_dire))
+                psi = matrices.get_psi(iconf)
+                ovlp = matrices.get_overlap(iconf)
 
-        elif saltedtype=="density-response":
+                psi_x_dire = sparse.csr_matrix.dot(psi, cg_dire)
+                Ad += 2.0 * sparse.csc_matrix.dot(
+                    psi.T,
+                    np.dot(ovlp, psi_x_dire),
+                )
 
+                del psi_x_dire, psi, ovlp
+
+        elif saltedtype == "density-response":
             itot = 0
             for iconf in range(ntrain):
-                for icart in ["x","y","z"]:
-                    psi_x_dire = sparse.csr_matrix.dot(psi_list[itot],cg_dire)
-                    Ad += 2.0 * sparse.csc_matrix.dot(psi_list[itot].T,np.dot(ovlp_list[iconf],psi_x_dire))
+                ovlp = matrices.get_overlap(iconf)
+
+                for _icart in ["x", "y", "z"]:
+                    psi = matrices.get_psi(itot)
+
+                    psi_x_dire = sparse.csr_matrix.dot(psi, cg_dire)
+                    Ad += 2.0 * sparse.csc_matrix.dot(
+                        psi.T,
+                        np.dot(ovlp, psi_x_dire),
+                    )
+
+                    del psi_x_dire, psi
                     itot += 1
-        
+
+                del ovlp
+
         if parallel:
             if fast_minimizer:
                 # Buffer-based Allreduce, not the pickle-based lowercase one.
@@ -321,12 +495,24 @@ def build():
 
         return Ad
 
-    psi_builder = None
-    if inp.gpr.psi_in_memory:
-        if saltedtype != "density":
-            raise NotImplementedError(
-                f"gpr.psi_in_memory requires saltedtype='density', got {saltedtype!r}"
-            )
+    # -------------------------------------------------------------------------
+    # Matrix preparation
+    # -------------------------------------------------------------------------
+
+    mem_time = time.time()
+    matrices = MatrixStore(matrix_storage, saltedpath, rank)
+    coef_list = []
+
+    if rank == 0:
+        print(
+            f"preparing matrices with gpr.matrix_storage={matrix_storage!r}...",
+            flush=True,
+        )
+
+    # Density Psi is now always generated by PsiBuilder here.  The storage flag
+    # controls only whether the generated matrices remain in RAM or are cached
+    # as mmap-able files.
+    if saltedtype == "density":
         psi_builder = PsiBuilder(
             rank,
             system=(
@@ -337,87 +523,179 @@ def build():
         )
         frames = read(inp.system.filename, ":")
 
-    if rank == 0:
-        print("loading matrices...")
-    ovlp_list = []
-    psi_list = []
-    coef_list = []
-    for iconf in trainrange:
-        ovlp_list.append(
-            np.load(osp.join(saltedpath, "overlaps", f"overlap_conf{iconf}.npy"))
+        report_every = max(
+            1,
+            int(os.environ.get("SALTED_MATRIX_REPORT_EVERY", "10")),
         )
-        # load feature vector as a scipy sparse object
-        if saltedtype=="density":
-            # coo, matching what load_npz returns: csr would reorder the matvec sums
-            psi_list.append(psi_builder.build(iconf, frames[iconf]) if psi_builder
-                            else sparse.load_npz(osp.join(
-              saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}.npz"
-            )))
-            coef_list.append(np.load(osp.join(
-              saltedpath, "coefficients", f"coefficients_conf{iconf}.npy"
-            )))
-        elif saltedtype=="density-response":
-            for icart in ["x","y","z"]:
-                psi_list.append(sparse.load_npz(osp.join(
-                  saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}_{icart}.npz"
-                )))
 
-    totsize = psi_list[0].shape[1]
+        for local_i, iconf in enumerate(trainrange):
+            matrices.add_overlap(
+                osp.join(
+                    saltedpath,"overlaps",f"overlap_conf{iconf}.npy",
+                )
+            )
+
+            psi = psi_builder.build(iconf, frames[iconf])
+            matrices.add_psi(
+                psi,
+                label=f"{local_i:06d}_conf{iconf}",
+            )
+
+            coef_list.append(
+                np.load(
+                    osp.join(
+                        saltedpath, "coefficients", f"coefficients_conf{iconf}.npy",
+                    ),
+                    allow_pickle=False,
+                )
+            )
+
+            # In mmap mode the cached copy is now authoritative; do not retain
+            # the just-built sparse matrix.
+            if matrix_storage == "mmap":
+                del psi
+
+            if (
+                inp.salted.verbose
+                and (
+                    (local_i + 1) % report_every == 0
+                    or local_i + 1 == ntrain
+                )
+            ):
+                if matrix_storage == "mmap":
+                    print(
+                        f"[rank {rank}] cached Psi " f"{local_i + 1}/{ntrain}: " f"{matrices.psi_cache_bytes / 1024**3:.3f} GiB", flush=True,
+                    )
+                else:
+                    print(
+                        f"[rank {rank}] loaded matrices "
+                        f"{local_i + 1}/{ntrain}",
+                        flush=True,
+                    )
+
+        # PsiBuilder and the complete ASE frame list are no longer used during
+        # minimisation in either storage mode.
+        del psi_builder, frames
+
+    elif saltedtype == "density-response":
+        # There is no PsiBuilder path for density-response in the supplied
+        # implementation.  Preserve its existing source (.npz files), but
+        # optionally convert one matrix at a time into mmap-able local storage.
+        for local_i, iconf in enumerate(trainrange):
+            matrices.add_overlap(
+                osp.join(
+                    saltedpath, "overlaps", f"overlap_conf{iconf}.npy",
+                )
+            )
+
+            for icart in ["x", "y", "z"]:
+                psi = sparse.load_npz(
+                    osp.join(
+                        saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}_{icart}.npz",
+                    )
+                )
+                matrices.add_psi(
+                    psi,
+                    label=f"{local_i:06d}_conf{iconf}_{icart}",
+                )
+                if matrix_storage == "mmap":
+                    del psi
+
+    else:
+        raise ValueError(f"Unsupported saltedtype {saltedtype!r}")
+
+    if matrices.npsi == 0:
+        raise RuntimeError("No Psi matrices were prepared")
+
+    totsize = matrices.psi_shape(0)[1]
     norm = 1.0 / float(ntraintot)
 
+    # These objects are only needed to construct Psi.  atomic_symbols/natoms
+    # remain live because the average-density branch uses them later.
+    del atomic_coords, atom_per_spe, natoms_per_spe
+    gc.collect()
+
+    if parallel:
+        comm.Barrier()
+
     if rank == 0:
-        print(f"problem dimensionality: {totsize}")
+        print(
+            f"matrix preparation took {time.time() - mem_time:.1f} s", flush=True,
+        )
+        print(f"problem dimensionality: {totsize}", flush=True)
+        if matrix_storage == "mmap":
+            print(
+                f"Psi mmap cache: {matrices.cache_dir}", flush=True,
+            )
 
     start = time.time()
 
-    # preconditioner
+    # -------------------------------------------------------------------------
+    # Preconditioner
+    # -------------------------------------------------------------------------
+
     if fast_minimizer:
         _tp = time.time()
-        diag_hessian = precond_func(ovlp_list, psi_list)
+        diag_hessian = precond_func(matrices)
+
         if parallel:
-            diag_hessian = np.ascontiguousarray(diag_hessian, dtype=np.float64)
+            diag_hessian = np.ascontiguousarray(
+                diag_hessian,
+                dtype=np.float64,
+            )
             comm.Allreduce(MPI.IN_PLACE, diag_hessian, op=MPI.SUM)
+
         diag_hessian = diag_hessian * norm + 2.0 * regul
-        # Guard the inversion: a zero or negative diagonal would poison the
-        # search direction. Fall back to 1.0 for any such entry rather than
-        # producing inf/nan and a silently wrong model.
+
         bad = ~(diag_hessian > 0.0)
         if bad.any() and rank == 0:
-            print(f"WARNING: {int(bad.sum())} of {totsize} preconditioner "
-                  f"diagonal entries were non-positive; using 1.0 for those.",
-                  flush=True)
-        P = np.where(bad, 1.0, 1.0 / np.where(bad, 1.0, diag_hessian))
+            print(
+                f"WARNING: {int(bad.sum())} of {totsize} preconditioner "
+                f"diagonal entries were non-positive; using 1.0 for those.",
+                flush=True,
+            )
+
+        P = np.where(
+            bad,
+            1.0,
+            1.0 / np.where(bad, 1.0, diag_hessian),
+        )
+
         if rank == 0:
-            spread = diag_hessian[~bad].max() / diag_hessian[~bad].min()
-            print(f"Jacobi preconditioner active (gpr.fast_minimizer): "
-                  f"built in {time.time()-_tp:.1f} s, diag range "
-                  f"[{diag_hessian[~bad].min():.3e}, {diag_hessian[~bad].max():.3e}], "
-                  f"spread {spread:.1f}x", flush=True)
+            spread = (
+                diag_hessian[~bad].max()
+                / diag_hessian[~bad].min()
+            )
+            print(
+                f"Jacobi preconditioner active (gpr.fast_minimizer): "
+                f"built in {time.time() - _tp:.1f} s, diag range "
+                f"[{diag_hessian[~bad].min():.3e}, "
+                f"{diag_hessian[~bad].max():.3e}], "
+                f"spread {spread:.1f}x",
+                flush=True,
+            )
     else:
         P = np.ones(totsize)
 
-    reg_log10_intstr = str(int(np.log10(regul)))  # for consistency
+    reg_log10_intstr = str(int(np.log10(regul)))
+
+    # -------------------------------------------------------------------------
+    # Restart / initialization
+    # -------------------------------------------------------------------------
 
     init = True
+
     if inp.gpr.restart:
         wpath = osp.join(
-            saltedpath,
-            rdir,
-            f"M{Menv}_zeta{zeta}",
-            f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
+            saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
         )
         dpath = osp.join(
-            saltedpath,
-            rdir,
-            f"M{Menv}_zeta{zeta}",
-            f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+            saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
         )
         rpath = osp.join(
-            saltedpath,
-            rdir,
-            f"M{Menv}_zeta{zeta}",
-            f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+            saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
         )
+
         if osp.exists(wpath) and osp.exists(dpath) and osp.exists(rpath):
             init = False
             w = np.load(wpath)
@@ -425,124 +703,144 @@ def build():
             r = np.load(rpath)
             s = np.multiply(P, r)
             delnew = np.dot(r, s)
-            loss = loss_func(w, ovlp_list, psi_list, coef_list)
+            loss = loss_func(w, matrices, coef_list)
         else:
-            # Print a warning and revert to the else behavior
             print(
-                "Warning: One or more required files to restart do not exist. Reverting to default initialization."
+                "Warning: One or more required files to restart do not exist. "
+                "Reverting to default initialization."
             )
 
     if init:
         w = np.ones(totsize) * 1e-04
-        loss = loss_func(w, ovlp_list, psi_list, coef_list)
-        r = -grad_func(w, ovlp_list, psi_list, coef_list)
+        loss = loss_func(w, matrices, coef_list)
+        r = -grad_func(w, matrices, coef_list)
         d = np.multiply(P, r)
         delnew = np.dot(r, d)
 
+    # -------------------------------------------------------------------------
+    # Conjugate-gradient minimisation
+    # -------------------------------------------------------------------------
+
     if rank == 0:
         print("minimizing...")
+
     for i in range(100000):
-        #loss = loss_func(w, ovlp_list, psi_list)
-        Ad = curv_func(d, ovlp_list, psi_list)
+        Ad = curv_func(d, matrices)
         curv = np.dot(d, Ad)
         alpha = delnew / curv
         w = w + alpha * d
+
         if (i + 1) % 50 == 0 and rank == 0:
             np.save(
                 osp.join(
-                    saltedpath,
-                    rdir,
-                    f"M{Menv}_zeta{zeta}",
-                    f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
                 ),
                 w,
             )
             np.save(
                 osp.join(
-                    saltedpath,
-                    rdir,
-                    f"M{Menv}_zeta{zeta}",
-                    f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
                 ),
                 d,
             )
             np.save(
                 osp.join(
-                    saltedpath,
-                    rdir,
-                    f"M{Menv}_zeta{zeta}",
-                    f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
                 ),
                 r,
             )
-        if (i+1)%50==0:
+
+        if (i + 1) % 50 == 0:
             loss_old = loss.copy()
-            loss = loss_func(w, ovlp_list, psi_list, coef_list)
-            if loss>loss_old:
+            loss = loss_func(w, matrices, coef_list)
+
+            if loss > loss_old:
                 if rank == 0:
-                    print(f"WARNING: loss function increased, search direction reset as the steepest descent.")
-                r = -grad_func(w, ovlp_list, psi_list, coef_list)
+                    print(
+                        "WARNING: loss function increased, search direction "
+                        "reset as the steepest descent."
+                    )
+
+                r = -grad_func(w, matrices, coef_list)
+
                 if rank == 0:
-                    print(f"step {i+1}, gradient norm: {np.linalg.norm(r):.3e}, loss: {loss:.3e}", flush=True)
+                    print(
+                        f"step {i + 1}, gradient norm: "
+                        f"{np.linalg.norm(r):.3e}, loss: {loss:.3e}",
+                        flush=True,
+                    )
+
                 if np.linalg.norm(r) < gradtol:
                     break
+
                 d = np.multiply(P, r)
                 delnew = np.dot(r, d)
+
             else:
                 r -= alpha * Ad
+
                 if rank == 0:
-                    print(f"step {i+1}, gradient norm: {np.linalg.norm(r):.3e}, loss: {loss:.3e}", flush=True)
+                    print(
+                        f"step {i + 1}, gradient norm: "
+                        f"{np.linalg.norm(r):.3e}, loss: {loss:.3e}",
+                        flush=True,
+                    )
+
                 if np.linalg.norm(r) < gradtol:
                     break
-                else:
-                    s = np.multiply(P, r)
-                    delold = delnew.copy()
-                    delnew = np.dot(r, s)
-                    beta = delnew / delold
-                    d = s + beta * d
-        else:
-            r -= alpha * Ad
-            if np.linalg.norm(r) < gradtol:
-                if rank == 0:
-                    print(f"step {i+1}, gradient norm: {np.linalg.norm(r):.3e}", flush=True)
-                break
-            else:
+
                 s = np.multiply(P, r)
                 delold = delnew.copy()
                 delnew = np.dot(r, s)
                 beta = delnew / delold
                 d = s + beta * d
 
+        else:
+            r -= alpha * Ad
+
+            if np.linalg.norm(r) < gradtol:
+                if rank == 0:
+                    print(
+                        f"step {i + 1}, gradient norm: "
+                        f"{np.linalg.norm(r):.3e}",
+                        flush=True,
+                    )
+                break
+
+            s = np.multiply(P, r)
+            delold = delnew.copy()
+            delnew = np.dot(r, s)
+            beta = delnew / delold
+            d = s + beta * d
+
+    # -------------------------------------------------------------------------
+    # Final save
+    # -------------------------------------------------------------------------
+
     if rank == 0:
         np.save(
             osp.join(
-                saltedpath,
-                rdir,
-                f"M{Menv}_zeta{zeta}",
-                f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
             ),
             w,
         )
         np.save(
             osp.join(
-                saltedpath,
-                rdir,
-                f"M{Menv}_zeta{zeta}",
-                f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
             ),
             d,
         )
         np.save(
             osp.join(
-                saltedpath,
-                rdir,
-                f"M{Menv}_zeta{zeta}",
-                f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
             ),
             r,
         )
+
         print("minimization completed succesfully!")
-        print(f"minimization time: {((time.time()-start)/60):.2f} minutes")
+        print(
+            f"minimization time: {((time.time() - start) / 60):.2f} minutes"
+        )
 
 
 if __name__ == "__main__":

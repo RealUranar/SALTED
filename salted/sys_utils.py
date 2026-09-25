@@ -932,7 +932,7 @@ class ParseConfig:
                 ),  # if restart the minimization
                 "trainsel": (
                     False,
-                    "random",
+                    "equal_rmsd_fps",
                     str,
                     lambda inp, val: val in (
                         "random",
@@ -940,11 +940,11 @@ class ParseConfig:
                         "equal_rmsd_fps",
                     ),
                 ),  # training-configuration selection mode
-                "psi_in_memory": (
+                "matrix_storage": (
                     False,
-                    False,
-                    bool,
-                    lambda inp, val: isinstance(val, bool),
+                    "mmap",
+                    str,
+                    lambda inp, val: val in ("mmap", "memory"),
                 ),  # build the RKHS vectors in minimize_loss instead of reading rkhs_vector output
                 "fast_minimizer": (
                     False,
