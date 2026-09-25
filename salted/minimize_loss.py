@@ -82,6 +82,56 @@ def _load_sparse_mmap(desc):
     col = np.load(p["col"], mmap_mode="r", allow_pickle=False)
     return sparse.coo_matrix((data, (row, col)), shape=desc["shape"], copy=False)
 
+def _aux_size_for_species(spe, lmax, nmax):
+    """Number of auxiliary coefficients carried by one atom of species ``spe``."""
+    return sum(
+        nmax[(spe, l)] * (2 * l + 1)
+        for l in range(lmax[spe] + 1)
+    )
+
+def _aux_indices_for_targets(symbols, target_species, lmax, nmax):
+    """
+    Return full-vector coefficient indices belonging to all target species.
+
+    ``target_species`` comes directly from ``inp.system.species``.  Indices are
+    collected in the original atom/auxiliary-function order, not grouped by
+    species.  Therefore the selected coefficient vector has the same row order
+    as a Psi built for those targets, and ``ovlp[np.ix_(idx, idx)]`` retains all
+    target-target couplings, including couplings between different atoms and
+    between different selected species.
+    """
+    target_set = set(target_species)
+    pieces = []
+    offset = 0
+
+    for spe in symbols:
+        naux = _aux_size_for_species(spe, lmax, nmax)
+        if spe in target_set:
+            pieces.append(np.arange(offset, offset + naux, dtype=np.int64))
+        offset += naux
+
+    if pieces:
+        indices = np.concatenate(pieces)
+    else:
+        indices = np.empty(0, dtype=np.int64)
+
+    return indices, offset
+
+
+def _full_average_coefficients(symbols, lmax, nmax, av_coefs):
+    """Build the average-density coefficient vector in full SALTED ordering."""
+    size = sum(_aux_size_for_species(spe, lmax, nmax) for spe in symbols)
+    result = np.zeros(size)
+    i = 0
+
+    for spe in symbols:
+        for l in range(lmax[spe] + 1):
+            for n in range(nmax[(spe, l)]):
+                if l == 0:
+                    result[i] = av_coefs[spe][n]
+                i += 2 * l + 1
+
+    return result
 
 class MatrixStore:
     """
@@ -112,6 +162,7 @@ class MatrixStore:
         self._psi_desc = []
 
         self.psi_cache_bytes = 0
+        self.overlap_cache_bytes = 0
 
         if self.mode == "mmap":
             cache_root = os.environ.get(
@@ -127,14 +178,43 @@ class MatrixStore:
         else:
             self.cache_dir = None
 
-    def add_overlap(self, path):
+    def add_overlap(self, path, indices=None, label=None):
+        """
+        Add an overlap matrix, optionally restricted to a principal submatrix.
+
+        ``indices`` is the ordered list of auxiliary functions represented by
+        the corresponding Psi rows.  Advanced indexing with ``np.ix_`` keeps
+        every selected-selected coupling, including couplings between distinct
+        atoms of the target species.
+        """
+        if indices is not None:
+            indices = np.asarray(indices, dtype=np.int64)
+
         if self.mode == "memory":
-            self._overlaps.append(
-                np.load(path, allow_pickle=False)
-            )
-        else:
-            # Do not map it yet.  Retain only its path.
+            ovlp = np.load(path, allow_pickle=False)
+            if indices is not None:
+                ovlp = ovlp[np.ix_(indices, indices)]
+            self._overlaps.append(ovlp)
+            return
+
+        if indices is None:
+            # Full-species case: map the original overlap directly on demand.
             self._overlap_paths.append(path)
+            return
+
+        if label is None:
+            raise ValueError("label is required when caching a reduced overlap")
+
+        # A non-contiguous principal-submatrix selection creates a dense copy.
+        # Do it once here, then mmap only the reduced matrix during minimisation
+        # instead of repeatedly selecting it from the full NFS-backed matrix.
+        full_ovlp = np.load(path, mmap_mode="r", allow_pickle=False)
+        reduced_ovlp = full_ovlp[np.ix_(indices, indices)]
+        cache_path = osp.join(self.cache_dir, f"overlap_{label}.npy")
+        _save_npy(cache_path, reduced_ovlp)
+        self._overlap_paths.append(cache_path)
+        self.overlap_cache_bytes += reduced_ovlp.nbytes
+        del reduced_ovlp, full_ovlp
 
     def add_psi(self, mat, label):
         if self.mode == "memory":
@@ -187,6 +267,10 @@ def build():
     regul = inp.gpr.regul
     gradtol = inp.gpr.gradtol
 
+    # Authoritative list of species predicted by this model.  Do not infer it
+    # from Psi dimensions: inp.system.species already defines all targets.
+    target_species = inp.system.species
+
     # The caller will add this configuration field.
     matrix_storage = str(inp.gpr.matrix_storage).strip().lower()
     if matrix_storage not in ("memory", "mmap"):
@@ -223,7 +307,7 @@ def build():
             comm.Barrier()
 
         av_coefs = {}
-        for spe in species:
+        for spe in target_species:
             av_coefs[spe] = np.load(
                 os.path.join(
                     saltedpath, "coefficients", "averages", f"averages_{spe}.npy"
@@ -251,6 +335,10 @@ def build():
     trainrange = list(trainrange)
     ntrain = len(trainrange)
 
+    # Prepared alongside the reduced/full reference coefficients.  Computing
+    # these once avoids reconstructing the average vector in every CG step.
+    average_list = []
+
     def loss_func(weights, matrices, coef_list):
         """Compute the electron-density loss function."""
 
@@ -260,24 +348,13 @@ def build():
             for iconf in range(ntrain):
                 ref_coefs = coef_list[iconf]
 
-                if average:
-                    Av_coeffs = np.zeros(ref_coefs.shape[0])
-                i = 0
-                for iat in range(natoms[trainrange[iconf]]):
-                    spe = atomic_symbols[trainrange[iconf]][iat]
-                    for l in range(lmax[spe] + 1):
-                        for n in range(nmax[(spe, l)]):
-                            if average and l == 0:
-                                Av_coeffs[i] = av_coefs[spe][n]
-                            i += 2 * l + 1
-
                 psi = matrices.get_psi(iconf)
                 ovlp = matrices.get_overlap(iconf)
 
                 # Same sparse operation/order as the previous implementation.
                 pred_coefs = sparse.csr_matrix.dot(psi, weights)
                 if average:
-                    pred_coefs += Av_coeffs
+                    pred_coefs += average_list[iconf]
 
                 ref_projs = np.dot(ovlp, ref_coefs)
                 pred_projs = np.dot(ovlp, pred_coefs)
@@ -339,23 +416,12 @@ def build():
 
                 ref_coefs = coef_list[iconf]
 
-                if average:
-                    Av_coeffs = np.zeros(ref_coefs.shape[0])
-                i = 0
-                for iat in range(natoms[trainrange[iconf]]):
-                    spe = atomic_symbols[trainrange[iconf]][iat]
-                    for l in range(lmax[spe]+1):
-                        for n in range(nmax[(spe,l)]):
-                            if average and l==0:
-                                Av_coeffs[i] = av_coefs[spe][n]
-                            i += 2 * l + 1
-
                 psi = matrices.get_psi(iconf)
                 ovlp = matrices.get_overlap(iconf)
 
                 pred_coefs = sparse.csr_matrix.dot(psi, weights)
                 if average:
-                    pred_coefs += Av_coeffs
+                    pred_coefs += average_list[iconf]
 
                 ref_projs = np.dot(ovlp, ref_coefs)
                 pred_projs = np.dot(ovlp, pred_coefs)
@@ -528,27 +594,99 @@ def build():
             int(os.environ.get("SALTED_MATRIX_REPORT_EVERY", "10")),
         )
 
-        for local_i, iconf in enumerate(trainrange):
-            matrices.add_overlap(
-                osp.join(
-                    saltedpath,"overlaps",f"overlap_conf{iconf}.npy",
-                )
+        if rank == 0:
+            print(
+                f"target species from inp.system.species: {target_species}",
+                flush=True,
             )
+
+        for local_i, iconf in enumerate(trainrange):
+            label = f"{local_i:06d}_conf{iconf}"
+            symbols = atomic_symbols[iconf]
 
             psi = psi_builder.build(iconf, frames[iconf])
-            matrices.add_psi(
-                psi,
-                label=f"{local_i:06d}_conf{iconf}",
+            full_coefs = np.load(
+                osp.join(
+                    saltedpath, "coefficients", f"coefficients_conf{iconf}.npy",
+                ),
+                allow_pickle=False,
             )
 
-            coef_list.append(
-                np.load(
-                    osp.join(
-                        saltedpath, "coefficients", f"coefficients_conf{iconf}.npy",
-                    ),
-                    allow_pickle=False,
+            # Select the union of all auxiliary-function blocks whose atom
+            # species is listed in inp.system.species.  The order follows the
+            # original structure, so non-contiguous atom blocks are allowed.
+            aux_idx, expected_full_size = _aux_indices_for_targets(
+                symbols, target_species, lmax, nmax,
+            )
+
+            # Validate the assumed atom/l/n/m coefficient ordering against the
+            # actual full QM coefficient vector before slicing anything.
+            if expected_full_size != full_coefs.shape[0]:
+                raise ValueError(
+                    f"Configuration {iconf}: auxiliary-basis bookkeeping gives "
+                    f"{expected_full_size} coefficients, but the reference file "
+                    f"contains {full_coefs.shape[0]}. Cannot safely select the "
+                    "target-species overlap block."
+                )
+
+            if psi.shape[0] != aux_idx.size:
+                present_targets = [
+                    spe for spe in dict.fromkeys(symbols)
+                    if spe in target_species
+                ]
+                raise ValueError(
+                    f"Configuration {iconf}: Psi has {psi.shape[0]} rows, but "
+                    f"inp.system.species={target_species} selects {aux_idx.size} "
+                    f"auxiliary coefficients (present targets: {present_targets}). "
+                    "Psi/reference ordering is therefore inconsistent."
+                )
+
+            # If every auxiliary function is targeted, avoid an unnecessary
+            # full-matrix advanced-indexing copy.  Otherwise reduce both the
+            # coefficients and overlap to the same target index set.
+            all_aux_selected = (
+                aux_idx.size == full_coefs.shape[0]
+                and np.array_equal(
+                    aux_idx, np.arange(full_coefs.shape[0], dtype=np.int64)
                 )
             )
+
+            if all_aux_selected:
+                overlap_idx = None
+                ref_coefs = full_coefs
+            else:
+                overlap_idx = aux_idx
+                ref_coefs = full_coefs[aux_idx]
+
+            matrices.add_overlap(
+                osp.join(
+                    saltedpath, "overlaps", f"overlap_conf{iconf}.npy",
+                ),
+                indices=overlap_idx,
+                label=label,
+            )
+            matrices.add_psi(psi, label=label)
+            coef_list.append(ref_coefs)
+
+            if average:
+                # Build averages only for atoms belonging to configured targets,
+                # in the same atom order used by aux_idx/Psi.
+                target_symbols = [spe for spe in symbols if spe in target_species]
+                average_coeffs = _full_average_coefficients(
+                    target_symbols, lmax, nmax, av_coefs,
+                )
+
+                if average_coeffs.shape[0] != ref_coefs.shape[0]:
+                    raise ValueError(
+                        f"Configuration {iconf}: average-density vector has "
+                        f"{average_coeffs.shape[0]} entries, but the selected "
+                        f"reference has {ref_coefs.shape[0]}."
+                    )
+                average_list.append(average_coeffs)
+
+            # Drop the full reference immediately after taking a target slice.
+            if ref_coefs is not full_coefs:
+                del full_coefs
 
             # In mmap mode the cached copy is now authoritative; do not retain
             # the just-built sparse matrix.
@@ -564,7 +702,11 @@ def build():
             ):
                 if matrix_storage == "mmap":
                     print(
-                        f"[rank {rank}] cached Psi " f"{local_i + 1}/{ntrain}: " f"{matrices.psi_cache_bytes / 1024**3:.3f} GiB", flush=True,
+                        f"[rank {rank}] cached matrices {local_i + 1}/{ntrain}: "
+                        f"Psi {matrices.psi_cache_bytes / 1024**3:.3f} GiB, "
+                        f"reduced overlaps "
+                        f"{matrices.overlap_cache_bytes / 1024**3:.3f} GiB",
+                        flush=True,
                     )
                 else:
                     print(
