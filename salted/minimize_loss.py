@@ -602,7 +602,7 @@ def build():
 
         for local_i, iconf in enumerate(trainrange):
             label = f"{local_i:06d}_conf{iconf}"
-            symbols = atomic_symbols[iconf]
+            symbols = frames[iconf].get_chemical_symbols()
 
             psi = psi_builder.build(iconf, frames[iconf])
             full_coefs = np.load(

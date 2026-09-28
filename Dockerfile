@@ -127,20 +127,17 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN python -m venv /opt/venv
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    MPICC=/opt/mpi/bin/mpicc \
+RUN MPICC=/opt/mpi/bin/mpicc \
     python -m pip install --no-binary=mpi4py mpi4py
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install \
+RUN python -m pip install \
         --prefer-binary \
         pyscf
 
 WORKDIR /src/SALTED
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install . \
+RUN python -m pip install . \
     && find /opt/venv -type d -name '__pycache__' \
         -prune -exec rm -rf '{}' +
 
@@ -151,9 +148,7 @@ FROM ${PYTHON_IMAGE} AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         libevent-2.1-7 \
         libevent-pthreads-2.1-7 \
