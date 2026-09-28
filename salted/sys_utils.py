@@ -169,13 +169,12 @@ def read_system(
     atomic_coords  = []
     for iconf in selected_indices:
         symbols = xyzfile[iconf].get_chemical_symbols()
-        atomic_coords.append( xyzfile[iconf].get_positions() / bohr2angs )
-        excluded_species = {spe for spe in symbols if spe not in spelist}
-        for spe in excluded_species:
-            mask = [s != spe for s in symbols]
-            symbols = list(filter(lambda a: a != spe, symbols))
-            atomic_coords = np.array(atomic_coords)[mask]
-
+        mask = [spe in spelist for spe in symbols]
+        
+        xyzfile[iconf].wrap()
+        atomic_coords.append( (xyzfile[iconf].get_positions() / bohr2angs)[mask] )
+        symbols = np.array(symbols)[mask]
+        
         if selected_mode:
             atomic_symbols[iconf] = symbols
         else:
