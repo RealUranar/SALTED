@@ -952,18 +952,6 @@ class ParseConfig:
                     bool,
                     lambda inp, val: isinstance(val, bool),
                 ),  # Jacobi-preconditioned CG + buffer-based collectives.
-                "charge_correction_mode": (
-                    False,
-                    1,
-                    int,
-                    lambda inp, val: isinstance(val, int) and 0 <= val <= 1,
-                ),  # electron-count constraint written into the .salted file:
-                    # 0 = off, 1 = scale the l=0 coefficients so the density
-                    # integrates to the exact count. Only VERSION 3 files carry
-                    # it; NoSpherA2 applies it, nothing changes during training.
-                    # Same linear system and same gradtol, so the same solution -
-                    # but a different iterate path, so NOT bit-identical to a model
-                    # built before this existed. Set false to reproduce one exactly.
                 "sparse_algorithm": (
                     False,
                     "numba",
