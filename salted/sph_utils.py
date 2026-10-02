@@ -680,6 +680,7 @@ def fps_kept_rows(v1, v2, llmax):
         keep[np.argmin(keep)] = True
     return keep
 
+@njit(parallel=True, fastmath = True)
 def equicombfps_rows(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llvec, lam, c2r, featsize, rowmap, nkeep):
     # lowmem: identical arithmetic to equicombfps (full ptemp and full-norm per
     # atom); only rows with rowmap[ifeat] >= 0 are stored, at that compact index.
