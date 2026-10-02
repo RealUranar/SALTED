@@ -387,8 +387,9 @@ def do_fps(x, d=0, verbose: bool = False):
     n = len(x)
     iy = np.zeros(d, int)
     iy[0] = 0
-    # Faster evaluation of Euclidean distance
-    n2 = np.sum((x * np.conj(x)), axis=1)
+    c = max(1, (256 << 20) // max(1, x.shape[1] * x.itemsize))
+    n2 = np.concatenate([np.sum((x[i:i + c] * np.conj(x[i:i + c])), axis=1)
+                         for i in range(0, n, c)])
     dl = n2 + n2[iy[0]] - 2 * np.real(np.dot(x, np.conj(x[iy[0]])))
     for i in range(1, d):
         if verbose:

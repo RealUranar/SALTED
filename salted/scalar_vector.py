@@ -2,18 +2,14 @@ import os
 import sys
 import time
 import os.path as osp
-from tracemalloc import start
 from ase.io import read
 import h5py
 
 import numpy as np
-from scipy import sparse
-from ase.data import atomic_numbers
 
 from salted.sys_utils import get_atom_idx, read_system, ParseConfig
 
 from salted import sph_utils
-from salted import basis
 from salted.sys_utils import ParseConfig, build_featomic_hyper_params
 
 
@@ -74,22 +70,22 @@ def build():
     else:
         omega2 = sph_utils.get_representation_coeffs(frames, rep2, HP2, 0, neighspe2, species, nang2, nrad2, natoms_total)
 
-    # Reshape arrays of expansion coefficients for optimal Fortran indexing 
-    v1 = np.transpose(omega1,(1,3,0,2)).copy()
-    v2 = np.transpose(omega2,(1,3,0,2)).copy()
-
-    # Compute complex to real transformation matrix for the given lambda value
-    c2r = sph_utils.complex_to_real_transformation([2*lam+1])[0]
+    v1 = np.transpose(omega1, (1, 3, 0, 2)).copy()
+    # lowmem: the kernels only read v2, so an identical rep can share v1.
+    v2 = v1 if omega2 is omega1 else np.transpose(omega2, (1, 3, 0, 2)).copy()
+    del omega1, omega2
+    c2r = sph_utils.complex_to_real_transformation([2 * lam + 1])[0]
+    
     start = time.time()
 
     if sparsify:
         featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
         nfps = len(vfps[lam])
-        p = sph_utils.equicombsparse_numba(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize,nfps,vfps[lam])
+        p = sph_utils.equicombsparse_numba(natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2, v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, nfps, vfps[lam])
         featsize = ncut
     else:
         featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
-        p = sph_utils.equicomb_numba(natoms_total,nang1,nang2,nspe1*nrad1,nspe2*nrad2,v1,v2,wigner3j,llmax,llvec,lam,c2r,featsize)
+        p = sph_utils.equicomb_numba(natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize)
 
     print("time = ", time.time()-start)
 

@@ -12,7 +12,7 @@ from ase.io import read
 from salted import sph_utils
 from salted import basis
 
-from salted.sph_utils import equicombfps
+from salted.sph_utils import fps_kept_rows, equicombfps, equicombfps_rows
 from salted.sys_utils import ParseConfig, build_featomic_hyper_params, do_fps, get_atom_idx, read_system
 from salted.selection_utils import (
     DEFAULT_SELECTION_SEED,
@@ -109,9 +109,9 @@ def build():
     else:
         omega2 = sph_utils.get_representation_coeffs(frames, rep2, HP2, 0, neighspe2, species, nang2, nrad2, natoms_total)
 
-    # Reshape arrays of expansion coefficients for optimal Fortran indexing
-    v1 = np.transpose(omega1,(1,3,0,2)).copy()
-    v2 = np.transpose(omega2,(1,3,0,2)).copy()
+    v1 = np.transpose(omega1, (1, 3, 0, 2)).copy()
+    # lowmem: equicombfps only reads v2, so an identical rep can share v1.
+    v2 = v1 if omega2 is omega1 else np.transpose(omega2, (1, 3, 0, 2)).copy()
     del omega1, omega2
 
     # Compute equivariant descriptors for each lambda value entering the SPH expansion of the electron density
@@ -124,7 +124,7 @@ def build():
         # Compute complex to real transformation matrix for the given lambda value
         c2r = sph_utils.complex_to_real_transformation([2 * lam + 1])[0]
 
-        # compute normalized equivariant descriptor
+        
         featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
         print(f"lambda = {lam}, feature space size = {featsize}")
 
@@ -134,9 +134,28 @@ def build():
                 f"{ncut} > {featsize}. Please remove the inp.descriptor.sparsify section or reduce ncut value."
             )
             sys.exit(1)
-
-        pvec = equicombfps(natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2, v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize,)
-        vfps = do_fps(pvec, ncut, verbose=inp.salted.verbose)
+            
+        # compute normalized equivariant descriptor
+        # lowmem: drop rows that are zero for every atom (species pairs that
+        # never co-occur) and free p_lambda before p_lambda+1 is allocated.
+        keep = fps_kept_rows(v1, v2, llmax)
+        rows = np.flatnonzero(keep)
+        print(f"lambda = {lam}, rows kept for FPS = {len(rows)} of {featsize}")
+        if ncut >= len(rows):
+            rows = np.arange(featsize)
+            pvec = equicombfps(
+                natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
+                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize,
+            )
+        else:
+            rowmap = np.full(featsize, -1, dtype=np.int64)
+            rowmap[rows] = np.arange(len(rows))
+            pvec = equicombfps_rows(
+                natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
+                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, rowmap, len(rows),
+            )
+        vfps = rows[do_fps(pvec, ncut, verbose=inp.salted.verbose)]
+        del pvec
         np.save(osp.join(sdir, f"fps{ncut}-{lam}.npy"), vfps)
 
     print(f"Feature sparsification finished in {time.time() - start:.1f} s")

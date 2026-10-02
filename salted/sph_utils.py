@@ -665,6 +665,67 @@ def equicomb_numba(natoms,nang1,nang2,nrad1,nrad2,v1,v2,w3j,llmax,llvec,lam,c2r,
                 p[iat,imu,ifeat] = ptemp[ifeat,imu] * normfact
     return p
 
+def fps_kept_rows(v1, v2, llmax):
+    """Rows of equicombfps's p that can be non-zero, as a bool mask (featsize,).
+
+    Row (n1, n2, il) is exactly zero unless some atom has a non-zero v1[:, n1]
+    and a non-zero v2[:, n2] (neighbour-species pairs that never meet in one
+    environment). The first all-zero row is kept so do_fps sees the same row 0
+    and the same tie order; the others are dropped.
+    """
+    nz1 = np.any(v1 != 0, axis=(2, 3)).astype(np.int64)
+    nz2 = np.any(v2 != 0, axis=(2, 3)).astype(np.int64)
+    keep = np.repeat(((nz1.T @ nz2) > 0).ravel(), llmax)
+    if not keep.all():
+        keep[np.argmin(keep)] = True
+    return keep
+
+def equicombfps_rows(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llvec, lam, c2r, featsize, rowmap, nkeep):
+    # lowmem: identical arithmetic to equicombfps (full ptemp and full-norm per
+    # atom); only rows with rowmap[ifeat] >= 0 are stored, at that compact index.
+    p = np.zeros((nkeep, natoms * (2*lam+1)), dtype=np.float64)
+    v2c  = np.conj(v2)
+    for iat in prange(natoms):
+        inner = 0.0
+        ptemp = np.zeros((featsize,2*lam+1), dtype=np.float64)
+        ifeat = 0
+        for n1 in range(nrad1):
+            for n2 in range(nrad2):
+                iwig = 0
+                for il in range(llmax):
+                    l1 = llvec[il,0]
+                    l2 = llvec[il,1]
+                    pcmplx = np.zeros(2*lam+1, dtype=np.complex128)
+                    for imu in range(2*lam+1):
+                        mu = imu - lam
+                        for im1 in range(2*l1+1):
+                            m1 = im1 - l1
+                            m2 = m1 - mu
+                            if (abs(m2) <= l2):
+                                im2 = m2 + l2
+                                v2cv  = v2c[iat,n2,l2,im2]
+                                v1v = v1[iat,n1,l1,im1]
+                                pcmplx[imu] = pcmplx[imu] + w3j[iwig] * v1v * v2cv
+                                iwig = iwig + 1
+                    preal = np.zeros(2*lam+1, dtype=np.float64)
+                    for imu in range(2*lam+1):
+                        for im1 in range(2*lam+1):
+                            preal[imu] = preal[imu] + np.real(c2r[imu,im1] * pcmplx[im1])
+                        inner = inner + preal[imu]**2
+                        ptemp[ifeat, imu] = preal[imu]
+                    ifeat = ifeat + 1
+        if inner == 0.0:
+            normfact = 0.0
+        else:
+            normfact = 1 / np.sqrt(inner)
+        for ifeat in range(featsize):
+            k = rowmap[ifeat]
+            if k >= 0:
+                for imu in range(2*lam+1):
+                    p[k, iat*(2*lam+1) + imu] = ptemp[ifeat, imu] * normfact
+
+    return p
+
 @njit(parallel=True, fastmath = True)
 def equicombfps(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llvec, lam, c2r, featsize):
     p = np.zeros((featsize, natoms * (2*lam+1)), dtype=np.float64)

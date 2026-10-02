@@ -43,7 +43,7 @@ types_dict = {
 OFFSET_TABLE_OF_CONTENTS = 5+4+4
 
 def first_match(pattern):
-    m = glob.glob(pattern)
+    m = sorted(glob.glob(pattern))
     return m[0] if m else None
 
 def write_key5(f, s: bytes):
@@ -80,7 +80,7 @@ def pack_averages(SALTED_file, path, debug: bool = False):
     if debug: print("Writing Averages")
     begin_of_block = SALTED_file.tell()
     SALTED_file.write(i32(int(types_dict["float64"])))
-    files = glob.glob(os.path.join(path,"coefficients","averages",'av*.npy'))
+    files = sorted(glob.glob(os.path.join(path,"coefficients","averages",'av*.npy')))
     SALTED_file.write(i32(int(len(files))))
     for file in files:
         if debug: print(file)
@@ -105,7 +105,7 @@ def pack_wigners(SALTED_file, path, inp, debug: bool = False):
     begin_of_block = SALTED_file.tell()
     SALTED_file.write(i32(int(types_dict["float64"])))
     files = glob.glob(os.path.join(path,"wigners",f'wigner_lam-*_lmax1-{inp.descriptor.rep1.nang}_lmax2-{inp.descriptor.rep2.nang}.dat'))
-    files.sort(key=lambda x: int(x.split("_")[1].split("-")[1]))
+    files.sort(key=lambda x: int(os.path.basename(x).split("_")[1].split("-")[1]))
     SALTED_file.write(i32(int(len(files))))
     for file in files:
         if debug: print(file)
