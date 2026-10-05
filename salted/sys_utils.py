@@ -953,6 +953,12 @@ class ParseConfig:
                     bool,
                     lambda inp, val: isinstance(val, bool),
                 ),  # Jacobi-preconditioned CG + buffer-based collectives.
+                "packed_overlap": (
+                    False,
+                    True,
+                    bool,
+                    lambda inp, val: isinstance(val, bool),
+                ),  # keep overlaps as the upper triangle of (S+S^T)/2: half the memory, last-bit changes
                 "sparse_algorithm": (
                     False,
                     "numba",

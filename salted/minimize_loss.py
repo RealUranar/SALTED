@@ -6,10 +6,12 @@ import time
 
 import numpy as np
 from ase.io import read
+from numba import njit, prange
+from numba.typed import List
 from scipy import sparse
 
 from salted import get_averages
-from salted.psi_builder import PsiBuilder
+from salted.psi_builder import PsiBlocks, PsiBuilder
 from salted.selection_utils import load_training_indices
 from salted.sys_utils import (
     ParseConfig,
@@ -21,66 +23,272 @@ from salted.sys_utils import (
     read_system,
 )
 
-def _sparse_nbytes(mat):
-    """Bytes occupied by the numerical/index arrays of a scipy sparse matrix."""
-    total = 0
-    seen = set()
-    for name in ("data", "indices", "indptr", "row", "col"):
-        arr = getattr(mat, name, None)
-        if arr is not None and hasattr(arr, "nbytes") and id(arr) not in seen:
-            total += arr.nbytes
-            seen.add(id(arr))
-    return total
+def _ram_budget(nlocal):
+    """Bytes of matrices this rank keeps in RAM in mmap mode; the rest is paged
+    from the node-local pack file.
+
+    SALTED_RAM_BUDGET_GB sets it per rank (0 = everything on disk).  Otherwise
+    SALTED_RAM_FRACTION (default 0.5) of this node's memory, shared by the
+    nlocal ranks on the node: the Slurm allocation if Slurm states one, capped
+    by MemAvailable at start-up (--mem=0 leaves only the latter)."""
+    gb = os.environ.get("SALTED_RAM_BUDGET_GB")
+    if gb is not None:
+        return int(float(gb) * 2**30)
+    with open("/proc/meminfo") as f:
+        node = next(int(l.split()[1]) * 1024 for l in f if l.startswith("MemAvailable:"))
+    slurm = int(os.environ.get("SLURM_MEM_PER_NODE", "0")) * 2**20
+    if not slurm and "SLURM_MEM_PER_CPU" in os.environ:
+        slurm = int(os.environ["SLURM_MEM_PER_CPU"]) * int(os.environ.get("SLURM_CPUS_ON_NODE", "1")) * 2**20
+    if slurm:
+        node = min(node, slurm)
+    return int(node * float(os.environ.get("SALTED_RAM_FRACTION", "0.5")) / nlocal)
 
 
-def _save_npy(path, arr):
-    """Write one array as an uncompressed .npy suitable for mmap."""
-    np.save(path, np.asarray(arr), allow_pickle=False)
+def _dot(psi, x):
+    """Psi @ x for a scipy matrix or a PsiBlocks (bit-identical to each other)."""
+    if isinstance(psi, PsiBlocks):
+        return psi.dot(x)
+    return sparse.csr_matrix.dot(psi, x)
 
 
-def _save_sparse_for_mmap(mat, prefix):
+def _rdot(psi, y):
+    """Psi.T @ y for a scipy matrix or a PsiBlocks."""
+    if isinstance(psi, PsiBlocks):
+        return psi.rdot(y)
+    return sparse.csc_matrix.dot(psi.T, y)
+
+
+@njit(fastmath=True)
+def _spmv_rows(ap, x, zc, i0, i1):
+    """Rows i0:i1 of the packed S @ x, scattered into the buffer zc."""
+    n = x.shape[0]
+    for i in range(i0, i1):
+        # Two 1-D loops over the row vectorise; one fused loop does not.
+        o = i * n - i * (i - 1) // 2
+        r = ap[o:o + n - i]
+        xs = x[i:]
+        acc = 0.0
+        for k in range(n - i):
+            acc += r[k] * xs[k]
+        xi = x[i]
+        zs = zc[i + 1:]
+        for k in range(1, n - i):
+            zs[k - 1] += r[k] * xi
+        zc[i] += acc
+
+
+@njit(fastmath=True)
+def _sum_rows(z, y, j0, j1):
+    for j in range(j0, j1):
+        s = 0.0
+        for c in range(z.shape[0]):
+            s += z[c, j]
+        y[j] = s
+
+
+@njit(parallel=True, fastmath=True)
+def _spmv_upper(ap, chunks, x):
+    """S @ x from the row-packed upper triangle ap of a symmetric S.
+
+    Row i holds S[i, i:].  Each fixed chunk of rows scatters its lower-triangle
+    half into its own buffer and the buffers are summed in chunk order, so the
+    bits do not depend on the thread count."""
+    n = x.shape[0]
+    nc = chunks.shape[0] - 1
+    z = np.zeros((nc, n))
+    for c in prange(nc):
+        _spmv_rows(ap, x, z[c], chunks[c], chunks[c + 1])
+    y = np.empty(n)
+    for j in prange(n):
+        _sum_rows(z, y, j, j + 1)
+    return y
+
+
+@njit(fastmath=True)
+def _spmv_upper_serial(ap, chunks, x):
+    """_spmv_upper on one thread, same chunks and summation order."""
+    n = x.shape[0]
+    nc = chunks.shape[0] - 1
+    z = np.zeros((nc, n))
+    for c in range(nc):
+        _spmv_rows(ap, x, z[c], chunks[c], chunks[c + 1])
+    y = np.empty(n)
+    _sum_rows(z, y, 0, n)
+    return y
+
+
+@njit
+def _blocks_dot_serial(vals, tab, x, nrows):
+    """psi_builder._blocks_dot on one thread (no fastmath: the same bits)."""
+    y = np.zeros(nrows)
+    for b in range(tab.shape[0]):
+        voff, nr, nc, r0, c0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3], tab[b, 4]
+        for m in range(nr):
+            s = 0.0
+            v0 = voff + m * nc
+            for c in range(nc):
+                v = vals[v0 + c]
+                if v != 0.0:
+                    s += v * x[c0 + c]
+            y[r0 + m] = s
+    return y
+
+
+@njit(parallel=True)
+def _curv_blocks(vals, tabs, aps, chunks, roff, gptr, jobs, d, totsize):
+    """sum_k 2 Psi_k^T S_k Psi_k d over all structures k, threaded over
+    structures and then over column ranges instead of inside each product.
+
+    Every element is summed exactly as the per-structure loop
+    Ad += 2.0 * psi.rdot(S.dot(psi.dot(d))) sums it: structures in order, each
+    one's rdot from 0.0 in block order.  Same bits, any thread count."""
+    npsi = len(vals)
+    w = np.empty(roff[-1])
+    for kk in prange(npsi):
+        k = np.int64(kk)
+        z = _blocks_dot_serial(vals[k], tabs[k], d, roff[k + 1] - roff[k])
+        w[roff[k]:roff[k + 1]] = _spmv_upper_serial(aps[k], chunks[k], z)
+    ad = np.zeros(totsize)
+    for j in prange(jobs.shape[0]):
+        g, ca, cb = jobs[j, 0], jobs[j, 1], jobs[j, 2]
+        tmp = np.empty(cb - ca)
+        for k in range(npsi):
+            b0, b1 = gptr[k, g], gptr[k, g + 1]
+            if b0 == b1:
+                continue  # the loop adds 2.0 * 0.0 here: no change
+            tmp[:] = 0.0
+            v, tab, r = vals[k], tabs[k], roff[k]
+            for b in range(b0, b1):
+                voff, nr, nc, r0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3]
+                for m in range(nr):
+                    yr = w[r + r0 + m]
+                    v0 = voff + m * nc
+                    for c in range(ca, cb):
+                        x = v[v0 + c]
+                        if x != 0.0:
+                            tmp[c - ca] += x * yr
+            c0 = tab[b0, 4]
+            for c in range(ca, cb):
+                ad[c0 + c] += 2.0 * tmp[c - ca]
+    return ad
+
+
+CURV_COLS = 64  # columns per job in _curv_blocks
+
+
+def _curv_setup(matrices, totsize):
+    """_curv_blocks arguments when every Psi is PsiBlocks and every S is
+    PackedSym, else None (the per-structure loop then runs)."""
+    n = matrices.npsi
+    if len(matrices._overlaps) != n:  # density-response: three Psi per S
+        return None
+    psis = [matrices.get_psi(k) for k in range(n)]
+    ovls = [matrices.get_overlap(k) for k in range(n)]
+    if not all(isinstance(p, PsiBlocks) for p in psis) or not all(isinstance(o, PackedSym) for o in ovls):
+        return None
+
+    def ro(a):  # pack arrays are read-only; numba lists need one array type
+        a = a.view()
+        a.flags.writeable = False
+        return a
+
+    vals, tabs, aps, chunks = (List() for _ in range(4))
+    for p, o in zip(psis, ovls):
+        vals.append(ro(p.vals))
+        tabs.append(ro(p.tab))
+        aps.append(ro(o.ap))
+        chunks.append(ro(o.chunks))
+    roff = np.concatenate(([0], np.cumsum([p.shape[0] for p in psis]))).astype(np.int64)
+    # Column groups (one per species, lam, n) are global; gptr[k, g]:gptr[k, g+1]
+    # are structure k's blocks of group g (empty if the species is absent).
+    starts = np.unique(np.concatenate([p.tab[:, 4] for p in psis]))
+    bounds = np.append(starts, totsize)
+    gptr = np.array([np.searchsorted(p.tab[:, 4], bounds) for p in psis], dtype=np.int64)
+    ncol = {}
+    for p in psis:
+        ncol.update(zip(p.tab[:, 4].tolist(), p.tab[:, 2].tolist()))
+    jobs = np.array([(g, a, min(a + CURV_COLS, ncol[s]))
+                     for g, s in enumerate(starts.tolist()) for a in range(0, ncol[s], CURV_COLS)],
+                    dtype=np.int64)
+    return vals, tabs, aps, chunks, roff, gptr, jobs
+
+
+class PackedSym:
     """
-    Persist a scipy sparse matrix without changing its sparse format/order.
+    Overlap stored as the upper triangle of (S + S^T) / 2: half the bytes.
 
-    Returns a small in-memory descriptor.  Only COO/CSR/CSC are supported
-    intentionally: silently converting another sparse format could change
-    summation order and therefore numerical reproducibility.
+    S_ij = <phi_i|phi_j> is symmetric by definition; the stored matrices
+    differ from S^T by round-off only (~3e-14), so this changes results in the
+    last bits, not in substance.  gpr.packed_overlap: false keeps dense S.
     """
-    if mat.getformat() != "coo":
-        raise TypeError(
-            f"mmap matrix storage currently supports only COO/CSR/CSC Psi matrices, "
-            f"got format {mat.getformat()!r}. Refusing an implicit conversion because it "
-            f"could change sparse summation order."
-        )
-    shape = tuple(int(x) for x in mat.shape)
 
-    paths = {
-        "data": f"{prefix}_data.npy",
-        "row": f"{prefix}_row.npy",
-        "col": f"{prefix}_col.npy",
-    }
-    _save_npy(paths["data"], mat.data)
-    _save_npy(paths["row"], mat.row)
-    _save_npy(paths["col"], mat.col)
-    return {
-        "shape": shape,
-        "paths": paths,
-        "bytes": _sparse_nbytes(mat),
-    }
+    NCHUNK = 64  # fixed, so the summation order is independent of threads
+
+    def __init__(self, ap, n):
+        self.ap, self.n = ap, n
+        i = np.arange(n + 1, dtype=np.int64)
+        rowptr = i * n - i * (i - 1) // 2
+        self.chunks = np.searchsorted(
+            rowptr, np.linspace(0, rowptr[-1], self.NCHUNK + 1)).astype(np.int64)
+
+    @classmethod
+    def from_dense(cls, s):
+        n = s.shape[0]
+        return cls((0.5 * (s + s.T))[np.triu_indices(n)], n)
+
+    @property
+    def shape(self):
+        return (self.n, self.n)
+
+    def dot(self, x):
+        return _spmv_upper(self.ap, self.chunks, np.ascontiguousarray(x, dtype=np.float64))
+
+    def dense(self):
+        u = np.zeros((self.n, self.n))
+        u[np.triu_indices(self.n)] = self.ap
+        return u + np.triu(u, 1).T
 
 
-def _load_sparse_mmap(desc):
-    """
-    Reconstruct a scipy sparse matrix backed by read-only np.memmap arrays.
+PRECOND_BLK = 2048  # rows of psi^T per chunk; caps the dense temporary
 
-    No sparse-format conversion is performed, so data/index ordering is the
-    same as when the matrix was cached.
-    """
-    p = desc["paths"]
-    data = np.load(p["data"], mmap_mode="r", allow_pickle=False)
-    row = np.load(p["row"], mmap_mode="r", allow_pickle=False)
-    col = np.load(p["col"], mmap_mode="r", allow_pickle=False)
-    return sparse.coo_matrix((data, (row, col)), shape=desc["shape"], copy=False)
+
+def _precond_add(diag_hessian, psi, ovlp):
+    """Add one structure's diag(2 psi^T S psi) to diag_hessian (scipy psi)."""
+    if isinstance(ovlp, PackedSym):
+        ovlp = ovlp.dense()
+    totsize = diag_hessian.shape[0]
+    psiT = psi.T.tocsr()
+
+    for beg in range(0, totsize, PRECOND_BLK):
+        end = min(beg + PRECOND_BLK, totsize)
+        blk = psiT[beg:end]
+        if blk.nnz == 0:
+            del blk
+            continue
+
+        tmp = blk.dot(ovlp)
+        diag_hessian[beg:end] += 2.0 * np.asarray(
+            blk.multiply(tmp).sum(axis=1)
+        ).ravel()
+
+        del tmp, blk
+
+    del psiT
+
+
+def _precond_add_blocks(diag_hessian, psi, ovlp):
+    """_precond_add for a PsiBlocks psi: one dense S_gg V_g product per column
+    group g (species, lam, n), V_g being that group's stacked kernel blocks.
+    Same sum in BLAS order: differs from _precond_add in the last bits only,
+    which moves the CG path, not the gradtol it converges to."""
+    tab = psi.tab
+    for g0, g1 in zip(psi.grp[:-1], psi.grp[1:]):
+        t = tab[g0:g1]
+        nr, nc, c0 = int(t[0, 1]), int(t[0, 2]), int(t[0, 4])
+        rows = (t[:, 3, None] + np.arange(nr)).ravel()
+        v = np.concatenate([psi.vals[o:o + nr * nc] for o in t[:, 0]]).reshape(-1, nc)
+        diag_hessian[c0:c0 + nc] += 2.0 * np.einsum("ij,ij->j", ovlp[np.ix_(rows, rows)] @ v, v)
+
 
 def _aux_size_for_species(spe, lmax, nmax):
     """Number of auxiliary coefficients carried by one atom of species ``spe``."""
@@ -135,16 +343,21 @@ def _full_average_coefficients(symbols, lmax, nmax, av_coefs):
 
 class MatrixStore:
     """
-    Uniform access to overlap and Psi matrices for both storage strategies.
+    Overlap and Psi matrices of this rank's structures.
 
-    In "memory" mode get_overlap()/get_psi() return retained objects.
+    "memory": everything stays in RAM.
 
-    In "mmap" mode they create lightweight read-only mappings on demand.
-    The caller should keep only the returned local reference for the duration
-    of the current structure calculation.
+    "mmap": matrices stay in RAM until this rank's budget (_ram_budget) is
+    used up; the rest is appended to one pack file per rank in the node-local
+    cache directory, which finalize() maps once for the whole run.  No file is
+    opened per structure or per CG step, and the mapped pages stay mapped.
+    Every matrix holds the same bytes wherever it lives, so the split does not
+    change the results.
     """
 
-    def __init__(self, mode, saltedpath, rank):
+    ALIGN = 4096  # pack offsets; every array starts page-aligned
+
+    def __init__(self, mode, saltedpath, rank, nlocal=1, packed=False):
         mode = str(mode).strip().lower()
         if mode not in ("memory", "mmap"):
             raise ValueError(
@@ -154,17 +367,18 @@ class MatrixStore:
 
         self.mode = mode
         self.rank = rank
-
-        self._overlap_paths = []
+        self.packed = packed
+        # Arrays/matrices, or (offset, dtype, shape) pack references until finalize().
         self._overlaps = []
-
         self._psis = []
-        self._psi_desc = []
-
-        self.psi_cache_bytes = 0
-        self.overlap_cache_bytes = 0
+        self.ram_bytes = 0
+        self.disk_bytes = 0
+        self.budget = None
+        self.cache_dir = None
+        self._pack = None
 
         if self.mode == "mmap":
+            self.budget = _ram_budget(nlocal)
             cache_root = os.environ.get(
                 "SALTED_PSI_CACHE_DIR",
                 osp.join(saltedpath, ".psi_mmap_cache"),
@@ -175,83 +389,98 @@ class MatrixStore:
             # only this rank's directory to avoid ever touching another rank.
             shutil.rmtree(self.cache_dir, ignore_errors=True)
             os.makedirs(self.cache_dir, exist_ok=True)
-        else:
-            self.cache_dir = None
+            self._pack = open(osp.join(self.cache_dir, "pack.bin"), "wb")
 
-    def add_overlap(self, path, indices=None, label=None):
+    def _keep(self, arr):
+        """arr itself while it fits the RAM budget, else its place in the pack."""
+        if self.budget is None or self.ram_bytes + arr.nbytes <= self.budget:
+            self.ram_bytes += arr.nbytes
+            return arr
+        arr = np.ascontiguousarray(arr)
+        self._pack.write(b"\0" * (-self._pack.tell() % self.ALIGN))
+        ref = (self._pack.tell(), arr.dtype, arr.shape)
+        arr.tofile(self._pack)
+        self.disk_bytes += arr.nbytes
+        return ref
+
+    def add_overlap(self, path, indices=None):
         """
-        Add an overlap matrix, optionally restricted to a principal submatrix.
+        Add an overlap matrix, optionally restricted to a principal submatrix,
+        and return it (in RAM) for immediate use.
 
         ``indices`` is the ordered list of auxiliary functions represented by
         the corresponding Psi rows.  Advanced indexing with ``np.ix_`` keeps
         every selected-selected coupling, including couplings between distinct
-        atoms of the target species.
+        atoms of the target species.  The source is read once, here; the CG
+        loop never touches it again.
         """
-        if indices is not None:
-            indices = np.asarray(indices, dtype=np.int64)
-
-        if self.mode == "memory":
-            ovlp = np.load(path, allow_pickle=False)
-            if indices is not None:
-                ovlp = ovlp[np.ix_(indices, indices)]
-            self._overlaps.append(ovlp)
-            return
-
+        ovlp = np.load(path, mmap_mode="r", allow_pickle=False)
         if indices is None:
-            # Full-species case: map the original overlap directly on demand.
-            self._overlap_paths.append(path)
-            return
+            ovlp = np.array(ovlp)
+        else:
+            ovlp = ovlp[np.ix_(np.asarray(indices, dtype=np.int64), np.asarray(indices, dtype=np.int64))]
+        if self.packed:
+            p = PackedSym.from_dense(ovlp)
+            p.ap = self._keep(p.ap)
+            self._overlaps.append(p)
+        else:
+            self._overlaps.append(self._keep(ovlp))
+        return ovlp
 
-        if label is None:
-            raise ValueError("label is required when caching a reduced overlap")
-
-        # A non-contiguous principal-submatrix selection creates a dense copy.
-        # Do it once here, then mmap only the reduced matrix during minimisation
-        # instead of repeatedly selecting it from the full NFS-backed matrix.
-        full_ovlp = np.load(path, mmap_mode="r", allow_pickle=False)
-        reduced_ovlp = full_ovlp[np.ix_(indices, indices)]
-        cache_path = osp.join(self.cache_dir, f"overlap_{label}.npy")
-        _save_npy(cache_path, reduced_ovlp)
-        self._overlap_paths.append(cache_path)
-        self.overlap_cache_bytes += reduced_ovlp.nbytes
-        del reduced_ovlp, full_ovlp
-
-    def add_psi(self, mat, label):
-        if self.mode == "memory":
+    def add_psi(self, mat):
+        if self.budget is None:
             self._psis.append(mat)
+        elif isinstance(mat, PsiBlocks):
+            self._psis.append(("blocks", [self._keep(mat.vals)], (mat.tab, mat.shape)))
+        elif mat.getformat() == "coo":
+            self._psis.append(("coo", [self._keep(a) for a in (mat.data, mat.row, mat.col)], mat.shape))
+        else:
+            # Converting would change the sparse summation order.
+            raise TypeError(f"mmap storage keeps COO or PsiBlocks Psi only, got {mat.getformat()!r}")
+
+    def finalize(self):
+        """Map the pack once and resolve its references into arrays/matrices."""
+        if self._pack is None:
             return
+        self._pack.close()
+        pack = (np.memmap(self._pack.name, dtype=np.uint8, mode="r")
+                if osp.getsize(self._pack.name) else None)
+        self._pack = None
 
-        prefix = osp.join(self.cache_dir, f"psi_{label}")
-        desc = _save_sparse_for_mmap(mat, prefix)
-        self._psi_desc.append(desc)
-        self.psi_cache_bytes += desc["bytes"]
+        def get(x):
+            if not isinstance(x, tuple):
+                return x
+            off, dtype, shape = x
+            n = dtype.itemsize * int(np.prod(shape))
+            return np.asarray(pack[off:off + n]).view(dtype).reshape(shape)
 
-    def get_overlap(self, index):
-        if self.mode == "memory":
-            return self._overlaps[index]
+        self._overlaps = [get(o) for o in self._overlaps]
+        for o in self._overlaps:
+            if isinstance(o, PackedSym):
+                o.ap = get(o.ap)
+        for i, e in enumerate(self._psis):
+            if not isinstance(e, tuple):
+                continue
+            kind, parts, meta = e
+            parts = [get(p) for p in parts]
+            if kind == "blocks":
+                self._psis[i] = PsiBlocks(parts[0], *meta)
+            else:
+                self._psis[i] = sparse.coo_matrix(
+                    (parts[0], (parts[1], parts[2])), shape=meta, copy=False)
 
-        return np.load(
-            self._overlap_paths[index],
-            mmap_mode="r",
-            allow_pickle=False,
-        )
+    def get_overlap(self, index) -> np.ndarray | PackedSym:
+        return self._overlaps[index]
 
-    def get_psi(self, index):
-        if self.mode == "memory":
-            return self._psis[index]
-
-        return _load_sparse_mmap(self._psi_desc[index])
+    def get_psi(self, index) -> PsiBlocks:
+        return self._psis[index]
 
     def psi_shape(self, index=0):
-        if self.mode == "memory":
-            return self._psis[index].shape
-        return self._psi_desc[index]["shape"]
+        return self._psis[index].shape
 
     @property
     def npsi(self):
-        if self.mode == "memory":
-            return len(self._psis)
-        return len(self._psi_desc)
+        return len(self._psis)
 
 
 def build():
@@ -339,7 +568,7 @@ def build():
     # these once avoids reconstructing the average vector in every CG step.
     average_list = []
 
-    def loss_func(weights, matrices, coef_list):
+    def loss_func(weights, matrices : MatrixStore, coef_list):
         """Compute the electron-density loss function."""
 
         loss = 0.0
@@ -352,12 +581,12 @@ def build():
                 ovlp = matrices.get_overlap(iconf)
 
                 # Same sparse operation/order as the previous implementation.
-                pred_coefs = sparse.csr_matrix.dot(psi, weights)
+                pred_coefs = _dot(psi, weights)
                 if average:
                     pred_coefs += average_list[iconf]
 
-                ref_projs = np.dot(ovlp, ref_coefs)
-                pred_projs = np.dot(ovlp, pred_coefs)
+                ref_projs = ovlp.dot(ref_coefs)
+                pred_projs = ovlp.dot(pred_coefs)
 
                 # collect gradient contributions
                 loss += sparse.csc_matrix.dot(
@@ -383,10 +612,10 @@ def build():
                     )
 
                     psi = matrices.get_psi(itot)
-                    pred_coefs = sparse.csr_matrix.dot(psi, weights)
+                    pred_coefs = _dot(psi, weights)
 
-                    ref_projs = np.dot(ovlp, ref_coefs)
-                    pred_projs = np.dot(ovlp, pred_coefs)
+                    ref_projs = ovlp.dot(ref_coefs)
+                    pred_projs = ovlp.dot(pred_coefs)
 
                     loss += sparse.csc_matrix.dot(
                         pred_coefs - ref_coefs, pred_projs - ref_projs
@@ -406,7 +635,7 @@ def build():
 
         return loss
 
-    def grad_func(weights, matrices, coef_list):
+    def grad_func(weights, matrices : MatrixStore, coef_list):
         """Compute the gradient of the electron-density loss function."""
 
         gradient = np.zeros(totsize)
@@ -419,16 +648,14 @@ def build():
                 psi = matrices.get_psi(iconf)
                 ovlp = matrices.get_overlap(iconf)
 
-                pred_coefs = sparse.csr_matrix.dot(psi, weights)
+                pred_coefs = _dot(psi, weights)
                 if average:
                     pred_coefs += average_list[iconf]
 
-                ref_projs = np.dot(ovlp, ref_coefs)
-                pred_projs = np.dot(ovlp, pred_coefs)
+                ref_projs = ovlp.dot(ref_coefs)
+                pred_projs = ovlp.dot(pred_coefs)
 
-                gradient += 2.0 * sparse.csc_matrix.dot(
-                    psi.T,
-                    pred_projs - ref_projs,
+                gradient += 2.0 * _rdot(psi, pred_projs - ref_projs,
                 )
 
                 del psi, ovlp
@@ -448,14 +675,12 @@ def build():
                     )
 
                     psi = matrices.get_psi(itot)
-                    pred_coefs = sparse.csr_matrix.dot(psi, weights)
+                    pred_coefs = _dot(psi, weights)
 
-                    ref_projs = np.dot(ovlp, ref_coefs)
-                    pred_projs = np.dot(ovlp, pred_coefs)
+                    ref_projs = ovlp.dot(ref_coefs)
+                    pred_projs = ovlp.dot(pred_coefs)
 
-                    gradient += 2.0 * sparse.csc_matrix.dot(
-                        psi.T,
-                        pred_projs - ref_projs,
+                    gradient += 2.0 * _rdot(psi, pred_projs - ref_projs,
                     )
 
                     del psi
@@ -477,53 +702,38 @@ def build():
             gradient += 2.0 * regul * weights
         return gradient
 
-    PRECOND_BLK = 2048  # rows of psi^T per chunk; caps the dense temporary
-
-    def precond_func(matrices):
+    def precond_func(matrices : MatrixStore):
         """Diagonal (Jacobi) preconditioner: diag(2 * sum psi^T S psi)."""
+
+        # With PsiBlocks it was summed during matrix preparation, from the
+        # scipy matrix, in the same structure order.
+        if precond_diag is not None:
+            return precond_diag
 
         diag_hessian = np.zeros(totsize)
 
         for iconf in range(ntrain):
             psi = matrices.get_psi(iconf)
             ovlp = matrices.get_overlap(iconf)
-
-            # This is still the largest per-structure sparse temporary, but it
-            # is released before the next structure is mapped.
-            psiT = psi.T.tocsr()
-
-            for beg in range(0, totsize, PRECOND_BLK):
-                end = min(beg + PRECOND_BLK, totsize)
-                blk = psiT[beg:end]
-                if blk.nnz == 0:
-                    del blk
-                    continue
-
-                tmp = blk.dot(ovlp)
-                diag_hessian[beg:end] += 2.0 * np.asarray(
-                    blk.multiply(tmp).sum(axis=1)
-                ).ravel()
-
-                del tmp, blk
-
-            del psiT, psi, ovlp
+            _precond_add(diag_hessian, psi, ovlp)
+            del psi, ovlp
 
         return diag_hessian
 
-    def curv_func(cg_dire, matrices):
+    def curv_func(cg_dire, matrices : MatrixStore):
         """Compute curvature on the given CG direction."""
 
         Ad = np.zeros(totsize)
 
-        if saltedtype == "density":
+        if curv_args is not None:
+            Ad = _curv_blocks(*curv_args, np.ascontiguousarray(cg_dire, dtype=np.float64), totsize)
+        elif saltedtype == "density":
             for iconf in range(ntrain):
                 psi = matrices.get_psi(iconf)
                 ovlp = matrices.get_overlap(iconf)
 
-                psi_x_dire = sparse.csr_matrix.dot(psi, cg_dire)
-                Ad += 2.0 * sparse.csc_matrix.dot(
-                    psi.T,
-                    np.dot(ovlp, psi_x_dire),
+                psi_x_dire = _dot(psi, cg_dire)
+                Ad += 2.0 * _rdot(psi, ovlp.dot(psi_x_dire),
                 )
 
                 del psi_x_dire, psi, ovlp
@@ -536,10 +746,8 @@ def build():
                 for _icart in ["x", "y", "z"]:
                     psi = matrices.get_psi(itot)
 
-                    psi_x_dire = sparse.csr_matrix.dot(psi, cg_dire)
-                    Ad += 2.0 * sparse.csc_matrix.dot(
-                        psi.T,
-                        np.dot(ovlp, psi_x_dire),
+                    psi_x_dire = _dot(psi, cg_dire)
+                    Ad += 2.0 * _rdot(psi, ovlp.dot(psi_x_dire),
                     )
 
                     del psi_x_dire, psi
@@ -566,8 +774,13 @@ def build():
     # -------------------------------------------------------------------------
 
     mem_time = time.time()
-    matrices = MatrixStore(matrix_storage, saltedpath, rank)
+    nlocal = comm.Split_type(MPI.COMM_TYPE_SHARED).Get_size() if parallel else 1
+    matrices = MatrixStore(matrix_storage, saltedpath, rank, nlocal,
+                           packed=bool(inp.gpr.packed_overlap))
     coef_list = []
+    precond_diag = None
+    # SALTED_PSI_BLOCKS=0 restores the scipy COO Psi; both give identical bits.
+    use_blocks = saltedtype == "density" and os.environ.get("SALTED_PSI_BLOCKS", "1") != "0"
 
     if rank == 0:
         print(
@@ -588,6 +801,8 @@ def build():
             atom_info=(atom_per_spe, natoms_per_spe),
         )
         frames = read(inp.system.filename, ":")
+        if use_blocks and fast_minimizer:
+            precond_diag = np.zeros(psi_builder.totsize)
 
         report_every = max(
             1,
@@ -601,10 +816,13 @@ def build():
             )
 
         for local_i, iconf in enumerate(trainrange):
-            label = f"{local_i:06d}_conf{iconf}"
             symbols = frames[iconf].get_chemical_symbols()
 
-            psi = psi_builder.build(iconf, frames[iconf])
+            if use_blocks:
+                kblocks = psi_builder.build_blocks(iconf, frames[iconf])
+                psi = psi_builder.psi_blocks(iconf, *kblocks)
+            else:
+                psi = psi_builder.build(iconf, frames[iconf])
             full_coefs = np.load(
                 osp.join(
                     saltedpath, "coefficients", f"coefficients_conf{iconf}.npy",
@@ -658,14 +876,25 @@ def build():
                 overlap_idx = aux_idx
                 ref_coefs = full_coefs[aux_idx]
 
-            matrices.add_overlap(
+            ovlp = matrices.add_overlap(
                 osp.join(
                     saltedpath, "overlaps", f"overlap_conf{iconf}.npy",
                 ),
                 indices=overlap_idx,
-                label=label,
             )
-            matrices.add_psi(psi, label=label)
+            if use_blocks:
+                if fast_minimizer and matrices.packed:
+                    # packed_overlap already gives up the last bits; so may this.
+                    _precond_add_blocks(precond_diag, psi, ovlp)
+                elif fast_minimizer:
+                    _precond_add(
+                        precond_diag,
+                        psi_builder.coo_from_blocks(iconf, *kblocks),
+                        ovlp,
+                    )
+                del kblocks
+            del ovlp
+            matrices.add_psi(psi)
             coef_list.append(ref_coefs)
 
             if average:
@@ -703,9 +932,9 @@ def build():
                 if matrix_storage == "mmap":
                     print(
                         f"[rank {rank}] cached matrices {local_i + 1}/{ntrain}: "
-                        f"Psi {matrices.psi_cache_bytes / 1024**3:.3f} GiB, "
-                        f"reduced overlaps "
-                        f"{matrices.overlap_cache_bytes / 1024**3:.3f} GiB",
+                        f"RAM {matrices.ram_bytes / 1024**3:.3f} GiB of "
+                        f"{matrices.budget / 1024**3:.3f}, "
+                        f"pack {matrices.disk_bytes / 1024**3:.3f} GiB",
                         flush=True,
                     )
                 else:
@@ -736,20 +965,19 @@ def build():
                         saltedpath, fdir, f"M{Menv}_zeta{zeta}", f"psi-nm_conf{iconf}_{icart}.npz",
                     )
                 )
-                matrices.add_psi(
-                    psi,
-                    label=f"{local_i:06d}_conf{iconf}_{icart}",
-                )
+                matrices.add_psi(psi)
                 if matrix_storage == "mmap":
                     del psi
 
     else:
         raise ValueError(f"Unsupported saltedtype {saltedtype!r}")
 
+    matrices.finalize()
     if matrices.npsi == 0:
         raise RuntimeError("No Psi matrices were prepared")
 
     totsize = matrices.psi_shape(0)[1]
+    curv_args = _curv_setup(matrices, totsize)
     norm = 1.0 / float(ntraintot)
 
     # These objects are only needed to construct Psi.  atomic_symbols/natoms
@@ -767,7 +995,10 @@ def build():
         print(f"problem dimensionality: {totsize}", flush=True)
         if matrix_storage == "mmap":
             print(
-                f"Psi mmap cache: {matrices.cache_dir}", flush=True,
+                f"rank 0 matrices: RAM {matrices.ram_bytes / 1024**3:.3f} GiB "
+                f"(budget {matrices.budget / 1024**3:.3f}), pack "
+                f"{matrices.disk_bytes / 1024**3:.3f} GiB in {matrices.cache_dir}",
+                flush=True,
             )
 
     start = time.time()

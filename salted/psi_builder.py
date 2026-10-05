@@ -1,6 +1,7 @@
 import os.path as osp
 
 import numpy as np
+from numba import njit, prange
 from scipy import sparse
 
 from salted import sph_utils
@@ -112,6 +113,14 @@ class PsiBuilder:
         )
 
     def build(self, iconf: int, structure) -> sparse.coo_matrix:
+        return self.coo_from_blocks(iconf, *self.build_blocks(iconf, structure))
+
+    def build_blocks(self, iconf: int, structure):
+        """The per-(species, lam) kernel blocks Psi and the row count Tsize.
+
+        Every (atom, lam) block is repeated nmax[(spe, lam)] times in the COO
+        matrix, once per radial channel n, only shifted in rows and columns.
+        PsiBlocks stores it once."""
         natoms = self.natoms[iconf]
 
         omega1 = sph_utils.get_representation_coeffs(
@@ -190,6 +199,11 @@ class PsiBuilder:
 
                 Tsize += nat_spe * self.nmax[(spe, lam)] * (2 * lam + 1)
 
+        return Psi, Tsize
+
+    def coo_from_blocks(self, iconf, Psi, Tsize) -> sparse.coo_matrix:
+        natoms = self.natoms[iconf]
+        ispe = {spe: 0 for spe in self.species}
         srows = arraylist()
         scols = arraylist()
         psi_nonzero = arraylist()
@@ -213,3 +227,90 @@ class PsiBuilder:
         ij = np.vstack((srows.finalize(), scols.finalize()))
         return sparse.coo_matrix(
             (psi_nonzero.finalize(), ij), shape=(Tsize, self.totsize))
+
+    def psi_blocks(self, iconf, Psi, Tsize):
+        """The same matrix as coo_from_blocks, each (atom, lam) block stored once."""
+        natoms = self.natoms[iconf]
+        base, off = {}, 0
+        for key, arr in Psi.items():
+            base[key] = off
+            off += arr.size
+        vals = np.concatenate([np.ascontiguousarray(a, dtype=np.float64).ravel() for a in Psi.values()])
+        ispe = {spe: 0 for spe in self.species}
+        tab = []
+        i = 0
+        for iat in range(natoms):
+            spe = self.atomic_symbols[iconf][iat]
+            for l in range(self.lmax[spe] + 1):
+                nc = Psi[(spe, l)].shape[1]
+                voff = base[(spe, l)] + ispe[spe] * (2 * l + 1) * nc
+                for n in range(self.nmax[(spe, l)]):
+                    tab.append((voff, 2 * l + 1, nc, i, self.cuml_Mcut[(spe, l, n)]))
+                    i += 2 * l + 1
+            ispe[spe] += 1
+        tab = np.array(tab, dtype=np.int64).reshape(-1, 5)
+        # Group by column range (one per (spe, lam, n)); the stable sort keeps the
+        # atom order inside a group, which is the COO order rdot must replay.
+        tab = tab[np.argsort(tab[:, 4], kind="stable")]
+        return PsiBlocks(vals, tab, (Tsize, self.totsize))
+
+
+class PsiBlocks:
+    """Psi as (atom, lam) kernel blocks, each stored once instead of nmax times.
+
+    dot/rdot replay scipy's coo_matvec on the coo_from_blocks matrix exactly:
+    zeros skipped as np.nonzero skips them, every output element summed from
+    0.0 in COO entry order, and no FMA (numba contracts only under fastmath).
+    The results are therefore bit-identical, not merely close.
+
+    Both run threaded (NUMBA_NUM_THREADS) without changing any summation:
+    every row of Psi @ x comes from one block, every column of Psi.T @ y from
+    one column group, and a group is walked serially in atom order."""
+
+    def __init__(self, vals, tab, shape):
+        self.vals, self.tab, self.shape = vals, tab, shape
+        # tab is sorted by first column; grp[g]:grp[g+1] are the blocks of group g.
+        self.grp = np.concatenate(([0], np.flatnonzero(np.diff(tab[:, 4])) + 1, [len(tab)]))
+
+    @property
+    def nbytes(self):
+        return self.vals.nbytes + self.tab.nbytes
+
+    def dot(self, x):
+        return _blocks_dot(self.vals, self.tab, np.ascontiguousarray(x, dtype=np.float64), self.shape[0])
+
+    def rdot(self, y):
+        """Psi.T @ y."""
+        return _blocks_rdot(self.vals, self.tab, self.grp, np.ascontiguousarray(y, dtype=np.float64), self.shape[1])
+
+
+@njit(parallel=True, cache=False)
+def _blocks_dot(vals, tab, x, nrows):
+    y = np.zeros(nrows)
+    for b in prange(tab.shape[0]):
+        voff, nr, nc, r0, c0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3], tab[b, 4]
+        for m in range(nr):
+            s = 0.0
+            v0 = voff + m * nc
+            for c in range(nc):
+                v = vals[v0 + c]
+                if v != 0.0:
+                    s += v * x[c0 + c]
+            y[r0 + m] = s
+    return y
+
+
+@njit(parallel=True, cache=False)
+def _blocks_rdot(vals, tab, grp, y, ncols):
+    t = np.zeros(ncols)
+    for g in prange(grp.shape[0] - 1):
+        for b in range(grp[g], grp[g + 1]):
+            voff, nr, nc, r0, c0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3], tab[b, 4]
+            for m in range(nr):
+                yr = y[r0 + m]
+                v0 = voff + m * nc
+                for c in range(nc):
+                    v = vals[v0 + c]
+                    if v != 0.0:
+                        t[c0 + c] += v * yr
+    return t
