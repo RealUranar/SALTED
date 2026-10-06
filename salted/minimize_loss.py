@@ -1,11 +1,11 @@
 import gc
+import hashlib
 import os
 import os.path as osp
 import shutil
 import time
 
 import numpy as np
-from ase.io import read
 from numba import njit, prange
 from numba.typed import List
 from scipy import sparse
@@ -20,7 +20,9 @@ from salted.sys_utils import (
     distribute_jobs,
     format_index_ranges,
     get_atom_idx,
+    read_frames,
     read_system,
+    run_or_abort,
 )
 
 def _ram_budget(nlocal):
@@ -800,7 +802,7 @@ def build():
             ),
             atom_info=(atom_per_spe, natoms_per_spe),
         )
-        frames = read(inp.system.filename, ":")
+        frames = read_frames(inp.system.filename)
         if use_blocks and fast_minimizer:
             precond_diag = np.zeros(psi_builder.totsize)
 
@@ -1217,4 +1219,4 @@ def build():
 
 
 if __name__ == "__main__":
-    build()
+    run_or_abort(build)

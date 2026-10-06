@@ -1,4 +1,5 @@
 # ruff: noqa: E501
+import functools
 import os
 import os.path as osp
 import re
@@ -79,6 +80,15 @@ def _basis_from_embedded_model(basis_data: dict[str, dict], spelist: list[str]):
     return lmax, nmax
 
 
+@functools.lru_cache(maxsize=1)
+def read_frames(filename: str) -> tuple:
+    """Every frame of the geometry file, parsed once per process.
+
+    get_averages, read_system and minimize_loss each parsed the whole file
+    again (3-5 s each for 10k frames).  The frames are shared: do not mutate."""
+    return tuple(read(filename, ":", parallel=False))
+
+
 def read_system(
     filename: str = None,
     spelist: list[str] = None,
@@ -138,7 +148,7 @@ def read_system(
     llmax = max(llist)
 
     # read system
-    xyzfile = read(filename, ":", parallel=False)
+    xyzfile = read_frames(filename)
     ndata_total = len(xyzfile)
 
     if conf_indices is None:
@@ -171,8 +181,8 @@ def read_system(
         symbols = xyzfile[iconf].get_chemical_symbols()
         mask = [spe in spelist for spe in symbols]
         
-        xyzfile[iconf].wrap()
-        atomic_coords.append( (xyzfile[iconf].get_positions() / bohr2angs)[mask] )
+        # wrap=True gives what wrap() did, without changing the shared frame
+        atomic_coords.append( (xyzfile[iconf].get_positions(wrap=True) / bohr2angs)[mask] )
         symbols = np.array(symbols)[mask]
         
         if selected_mode:
@@ -221,6 +231,25 @@ def init_property_file(propname, saltedpath, vdir, Menv, zeta, ntrain, reg_log10
     pfile = open(pfname, "a")
 
     return pfile
+
+
+def run_or_abort(main):
+    """main(), but an exception on one MPI rank aborts every rank.
+
+    Otherwise the other ranks wait in their next collective until the job's
+    time limit (job 859171: a damaged overlap pack on one rank held a whole
+    node).  This is what `python -m mpi4py` does."""
+    try:
+        main()
+    except Exception:
+        comm, size, rank, _ = detect_mpi()
+        if size > 1:
+            import traceback
+            traceback.print_exc()
+            sys.stderr.flush()
+            sys.stdout.flush()
+            comm.Abort(1)
+        raise
 
 
 def detect_mpi():
