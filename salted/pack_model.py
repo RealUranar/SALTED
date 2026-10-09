@@ -149,78 +149,103 @@ def pack_fps(SALTED_file, path, inp, debug: bool = False):
         #ndims (4 bytes, int32)
         #dims (4*ndims bytes, int32)
         #data (dim1*dim2*8 bytes, float64)
-def pack_projectors(SALTED_file, path, inp, debug: bool = False):
+def projector_file(path, inp):
     file_proj = first_match(os.path.join(path, f"equirepr_{inp.salted.saltedname}", f'projector_M{inp.gpr.Menv}_zeta{inp.gpr.z:.1f}.h5'))
     if file_proj is None:
         raise FileNotFoundError(f"No projector file found for M={inp.gpr.Menv}, zeta={inp.gpr.z} in {os.path.join(path, f'equirepr_{inp.salted.saltedname}')}")
-    begin_of_block = SALTED_file.tell()
-    if debug: print(f"Reading {file_proj}")
-    SALTED_file.write(i32(int(types_dict["float64"])))
-    with h5py.File(file_proj, 'r') as h5file:
-        proje = h5file["projectors"]
-        SALTED_file.write(i32(int(len(proje.keys()))))
-        for key in sorted(proje.keys()):
-            if debug: print(key, end=": ")
-            #First 5 bytes are the key as string
-            write_key5(SALTED_file, key.encode("utf-8"))
-            #Write the number of sub-keys
-            SALTED_file.write(i32(int(len(proje[key].keys()))))
-            for key2 in sorted(proje[key].keys()):
-                if debug: print(key2, end = " ")
-                data = np.array(proje[key][key2], dtype=np.float64)
-                write_data_head(SALTED_file, data)
-                SALTED_file.write(np.asarray(data,dtype='<f8').tobytes())
-            if debug: print()
-    write_chunk_location(SALTED_file, "PROJ", begin_of_block)
+    return file_proj
 
-def pack_FEATS(SALTED_file, path, inp, debug: bool = False):
+def feature_file(path, inp):
     file_feat = first_match(os.path.join(path, f"equirepr_{inp.salted.saltedname}", f'FEAT_M-{inp.gpr.Menv}*.h5'))
     if file_feat is None:
         raise FileNotFoundError(f"No FEAT file found for M={inp.gpr.Menv} in {os.path.join(path, f'equirepr_{inp.salted.saltedname}')}")
-    begin_of_block = SALTED_file.tell()
-    if debug: print(f"Reading {file_feat}")
-    SALTED_file.write(i32(int(types_dict["float64"])))
-    with h5py.File(file_feat, 'r') as h5file:
-        descr = h5file["sparse_descriptors"]
-        SALTED_file.write(i32(int(len(descr.keys()))))
-        for key in sorted(descr.keys()):
-            if debug: print(key, end=": ")
-            #First 5 bytes are the key as string
-            write_key5(SALTED_file, key.encode("utf-8"))
-            #Write the number of sub-keys
-            SALTED_file.write(i32(int(len(descr[key].keys()))))
-            for key2 in sorted(descr[key].keys()):
-                if debug: print(key2, end = " ")
-                data = np.array(descr[key][key2], dtype=np.float64)
-                write_data_head(SALTED_file, data)
-                SALTED_file.write(np.asarray(data,dtype='<f8').tobytes())
-            if debug: print()
-    write_chunk_location(SALTED_file, "FEATS", begin_of_block)
+    return file_feat
+
+def weights_file(path, inp):
+    file = first_match(os.path.join(path, f"regrdir_{inp.salted.saltedname}", f"M{inp.gpr.Menv}_zeta{inp.gpr.z:.1f}", f'weights_N{int(inp.gpr.Ntrain*inp.gpr.trainfrac)}_reg*'))
+    if file is None:
+        raise FileNotFoundError(f"No weights file found for M={inp.gpr.Menv}, zeta={inp.gpr.z} in {os.path.join(path, f'regrdir_{inp.salted.saltedname}')}")
+    return file
+
+
+#VERSION 4 (--fold): what NoSpherA2 -salted_fold makes of an unfolded file, written directly.
+#Prediction only needs psi W^T per (species, lam), psi = K V with K the kernel between a structure's
+#descriptors p and the sparse features F. VW = V W^T (nmax columns) replaces projector and weights, and
+#  zeta = 1:  K = p F^T, so ENVW holds VW^T F, nmax x ncut, in place of FEATS, PROJ and WEIGH.
+#  zeta != 1: above lam = 0 K carries k0 = (p0 F0^T)^(zeta-1) per environment pair, so GENV holds
+#             G[M, n*ncut + f] = sum_m VW[(M,m), n] F[(M,m), f] from the lam L on where nmax <= 2 lam + 1
+#             for every lam >= L (never larger than the features it replaces); FEATL and PROJW keep
+#             F and VW below L, lam = 0 always (k0 is made from it), and GENV is 0 x 0 there.
+#Same layout as the lambda-based blocks above; NoSpherA2 and salted/prediction.py (standalone) read them.
+def fold_lambda(V, F, W, lam: int, zeta1: bool, genv: bool) -> dict:
+    """The VERSION 4 blocks of one (species, lam): projector V, sparse features F, weights W (nmax x ncols of V)"""
+    VW = V @ W.T
+    if zeta1:
+        #F[:Mcut (2 lam + 1)] as get_feats_projs projects it
+        return {"ENVW": VW.T @ F[:V.shape[0]]}
+    if F.shape[0] != V.shape[0]:
+        raise ValueError(f"Features of lam {lam} have {F.shape[0]} rows, its projector {V.shape[0]}: "
+                         "only Mcut 'fixed' folds for zeta != 1, pack with --no-fold")
+    if not genv:
+        return {"FEATL": F, "PROJW": VW, "GENV": np.zeros((0, 0))}
+    d = 2 * lam + 1
+    M, nc = F.shape[0] // d, F.shape[1]
+    G = np.einsum('amn,amf->anf', VW.reshape(M, d, -1), F.reshape(M, d, nc))
+    return {"GENV": G.reshape(M, -1)}
 
 
 #Format:
+#FOR EACH BLOCK IN [ENVW] (zeta == 1) OR [FEATL, PROJW, GENV] (zeta != 1):
 #TYPE_OF_DATA (4 bytes, int32)
-#Nfiles (4 bytes, int32) Here 1
-#FOR EACH FILE:
-    #ndims (4 bytes, int32)
-    #dims (4*ndims bytes, int32)
-    #data (ndims*8 bytes, float64)
-def pack_weights(SALTED_file, path, inp, debug: bool = False):
-    if debug: print("Writing Weights")
-    begin_of_block = SALTED_file.tell()
-    SALTED_file.write(i32(int(types_dict["float64"])))
-    SALTED_file.write(i32(1))
-    file = first_match(os.path.join(path, f"regrdir_{inp.salted.saltedname}", f"M{inp.gpr.Menv}_zeta{inp.gpr.z:.1f}", f'weights_N{int(inp.gpr.Ntrain*inp.gpr.trainfrac)}_reg*'))
-    if debug: print(f"Found weights file: {file}")
-    if file is None:
-        raise FileNotFoundError(f"No weights file found for M={inp.gpr.Menv}, zeta={inp.gpr.z} in {os.path.join(path, f'regrdir_{inp.salted.saltedname}')}")
-    data = np.load(file).astype(np.float64)
-    write_data_head(SALTED_file, data)
-    SALTED_file.write(np.asarray(data,dtype='<f8').tobytes())
-    write_chunk_location(SALTED_file, "WEIGH", begin_of_block)
+#nSpecies (4 bytes, int32)
+#FOR EACH SPECIES:
+    #element (5 bytes, str)
+    #nLambda (4 bytes, int32)
+    #FOR EACH LAMBDA:
+        #ndims (4 bytes, int32)
+        #dims (4*ndims bytes, int32)
+        #data (product(dims)*8 bytes, float64)
+#FEATL/PROJW contain only unfolded lambdas; GENV contains empty arrays for these.
+def pack_folded(SALTED_file, path, inp, debug: bool = False):
+    [lmax, nmax] = basis.basiset(inp.qm.dfbasis, inp.qm.dfbasis_file)
+    zeta1 = inp.gpr.z == 1.0
+    weights = np.load(weights_file(path, inp)).astype(np.float64)
+    blocks = {name: [] for name in (["ENVW"] if zeta1 else ["FEATL", "PROJW", "GENV"])}
+    isize = 0
+    with h5py.File(projector_file(path, inp), 'r') as hp, h5py.File(feature_file(path, inp), 'r') as hf:
+        proje, descr = hp["projectors"], hf["sparse_descriptors"]
+        #Species order and lam-major, n-major weights as SALTED's prediction reads them
+        for spe in inp.system.species:
+            nlam = lmax[spe] + 1
+            L = nlam
+            while not zeta1 and L > 1 and nmax[(spe, L - 1)] <= 2 * L - 1: L -= 1
+            if debug: print(spe, "zeta = 1" if zeta1 else f"GENV from lam {L}" if L < nlam else "no GENV")
+            for mats in blocks.values():
+                mats.append((spe, []))
+            for lam in range(nlam):
+                V = np.array(proje[spe][str(lam)], dtype=np.float64)
+                F = np.array(descr[spe][str(lam)], dtype=np.float64)
+                W = weights[isize:isize + nmax[(spe, lam)] * V.shape[1]].reshape(nmax[(spe, lam)], V.shape[1])
+                isize += W.size
+                for name, m in fold_lambda(V, F, W, lam, zeta1, lam >= L).items():
+                    blocks[name][-1][1].append(m)
+    if isize != weights.size:
+        raise ValueError(f"The projectors use {isize} weights, the weights file holds {weights.size}")
+    for name, per_species in blocks.items():
+        begin_of_block = SALTED_file.tell()
+        SALTED_file.write(i32(int(types_dict["float64"])))
+        SALTED_file.write(i32(len(per_species)))
+        for spe, mats in per_species:
+            write_key5(SALTED_file, spe.encode("utf-8"))
+            SALTED_file.write(i32(len(mats)))
+            for m in mats:
+                write_data_head(SALTED_file, m)
+                SALTED_file.write(np.asarray(m, dtype='<f8').tobytes())
+        write_chunk_location(SALTED_file, name, begin_of_block)
+    return list(blocks)
 
 def pack_model_info(SALTED_file, inp, debug: bool = False):
-    [lmax, nmax] = basis.basiset(inp.qm.dfbasis)
+    [lmax, nmax] = basis.basiset(inp.qm.dfbasis, inp.qm.dfbasis_file)
     if debug: print("Writing Model Info")
     inputs = [
         (b"averg", inp.system.average),  #Bools
@@ -353,21 +378,36 @@ def pack_basis(SALTED_file, inp, debug: bool = False):
     begin_of_block = SALTED_file.tell()
     basis_name = inp.qm.dfbasis
     symbols = inp.system.species
-    basis = {}
+    bases = {}
     for symbol in symbols:
         try:
-            basis[symbol] = gto.basis.load(basis_name, symb=symbol)
+            bases[symbol] = gto.basis.load(basis_name, symb=symbol)
         except gto.basis.BasisNotFoundError:
             try:
-                basis[symbol] = read_new_basis("additional_basis", symbol)
+                bases[symbol] = read_new_basis("additional_basis", symbol)
             except ValueError as e:
                 print(f"Basis Set for symbol {symbol!r} not found in PySCF or additional_basis file, skipping basis packing")
                 return
+    # The weights run over the basis the model was trained with. Models from before e3a57ec were
+    # trained on the uncontracted set (cc-pvtz-jkfit Br 16,14,12,10,7 against 14,13,11,9,4), and a
+    # BASIS that does not match makes NoSpherA2 misread the weights
+    [lmax, nmax] = basis.basiset(inp.qm.dfbasis, inp.qm.dfbasis_file)
+    def shells_per_l(shells):
+        return [sum(1 for s in shells if s[0] == l) for l in range(max(s[0] for s in shells) + 1)]
+    for symbol in symbols:
+        trained = [nmax[(symbol, l)] for l in range(lmax[symbol] + 1)]
+        if shells_per_l(bases[symbol]) == trained:
+            continue
+        if shells_per_l(gto.uncontract(bases[symbol])) != trained:
+            raise ValueError(f"{basis_name} for {symbol} has {shells_per_l(bases[symbol])} shells per l, the model was "
+                             f"trained with {trained}; put the set it was trained with in additional_basis")
+        if debug: print(f"{symbol}: trained on the uncontracted {basis_name}, packing that")
+        bases[symbol] = gto.uncontract(bases[symbol])
     SALTED_file.write(i32(int(types_dict["float64"])))  # Data type
     SALTED_file.write(i32(int(len(symbols)))) # Number of elements (blocks to read after this)
     for elem in symbols:
         SALTED_file.write(i32(int(ELEMENTS_TO_NUM[elem])))
-        shells = basis[elem]
+        shells = bases[elem]
         (contractions_per_shell,
          angular_momenta_per_shell,
          coeffs_per_shell,
@@ -384,7 +424,7 @@ def pack_basis(SALTED_file, inp, debug: bool = False):
     write_chunk_location(SALTED_file, "BASIS", begin_of_block)
 
 MAGIC_NUMBER = b"SALTD"  # 5-byte identifier
-VERSION = 2
+VERSION = 4
 HAS_PYSCF = False
 try:
     import pyscf
@@ -393,28 +433,26 @@ try:
 except ImportError:
     HAS_PYSCF = False
 
-BLOCKS = ["AVERG", "WIG", "FPS", "FEATS", "PROJ", "WEIGH", "CONFG"]
-if HAS_PYSCF: BLOCKS.append("BASIS")
-N_BLOCKS = len(BLOCKS)
-def write_header(SALTED_file):
+def write_header(SALTED_file, version, n_blocks):
     SALTED_file.write(MAGIC_NUMBER)
-    SALTED_file.write(i32(int(VERSION)))
-    SALTED_file.write(i32(N_BLOCKS))
+    SALTED_file.write(i32(int(version)))
+    SALTED_file.write(i32(n_blocks))
     #Leave (5+4)*N_Blocks bytes for the block names and locations (5bytes for the name, 4 bytes for the location)
-    SALTED_file.write(b'\0'*(5+4)*N_BLOCKS)
-    
+    SALTED_file.write(b'\0'*(5+4)*n_blocks)
+
 def build(debug: bool = False):
     inp = ParseConfig().parse_input()
     path = inp.salted.saltedpath
+    model_blocks = (["ENVW"] if inp.gpr.z == 1.0 else ["FEATL", "PROJW", "GENV"])
+    n_blocks = 4 + len(model_blocks) + HAS_PYSCF
     with open(f"{inp.salted.saltedname}.salted", "wb") as f:
-        write_header(f)
+        write_header(f, VERSION, n_blocks)
         pack_model_info(f, inp, debug)
         pack_averages(f, path, debug)
         pack_wigners(f, path, inp, debug)
         pack_fps(f, path, inp, debug)
-        pack_FEATS(f, path, inp, debug)
-        pack_projectors(f, path, inp, debug)
-        pack_weights(f, path, inp, debug)
+        pack_folded(f, path, inp, debug)
+
         if HAS_PYSCF:
             pack_basis(f, inp, debug)
 

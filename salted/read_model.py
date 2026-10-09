@@ -19,7 +19,9 @@ types_dict = {
 }
 
 MAGIC_NUMBER = b"SALTD"
-SUPPORTED_VERSIONS = [1, 2]
+# 4 is folded (pack_model --fold, NoSpherA2 -salted_fold), which NoSpherA2 wrote as 5 until 9 Oct 2026
+SUPPORTED_VERSIONS = [1, 2, 4, 5]
+FOLDED_BLOCKS = ["ENVW", "FEATL", "PROJW", "GENV"]
 
 def read_key5(f) -> str:
     """Read a 5-byte key and strip null bytes"""
@@ -287,6 +289,8 @@ def read_salted_model(filename: str) -> Dict[str, Any]:
         - 'feats': Sparse descriptors
         - 'projectors': Projector matrices
         - 'weights': Regression weights
+        - 'envw', 'featl', 'projw', 'genv': a folded model's blocks in place of
+          feats, projectors and weights (see pack_model.pack_folded)
         - 'basis': Basis set information (if available)
     """
     model = {}
@@ -334,7 +338,14 @@ def read_salted_model(filename: str) -> Dict[str, Any]:
             print("Reading weights...")
             f.seek(blocks['WEIGH'])
             model['weights'] = read_weights(f)
-        
+
+        # Same species/lambda layout as PROJ
+        for name in FOLDED_BLOCKS:
+            if name in blocks:
+                print(f"Reading folded {name}...")
+                f.seek(blocks[name])
+                model[name.lower()] = read_projectors(f)
+
         if 'BASIS' in blocks:
             print("Reading basis sets...")
             f.seek(blocks['BASIS'])

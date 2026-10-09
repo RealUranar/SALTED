@@ -10,7 +10,7 @@ from ase.data import atomic_numbers
 from ase.io import read
 from scipy import special
 
-from salted import basis, sph_utils
+from salted import basis, read_model, sph_utils
 from salted.sph_utils import equicombnonorm, antiequicombnonorm, kernelequicomb, kernelnorm
 from salted.sys_utils import (
     PLACEHOLDER,
@@ -327,7 +327,14 @@ def compute_prediction(
     for spe in species:
         ispe[spe] = 0
         for l in range(lmax[spe] + 1):
+            # weights=None: a folded model, psi_nm holds psi W^T with column n for C_n
+            if weights is None and psi_nm[(spe, l)].shape[1] != nmax[(spe, l)]:
+                raise ValueError(f"The folded model has {psi_nm[(spe, l)].shape[1]} functions for {spe} l={l}, its basis "
+                                 f"{nmax[(spe, l)]}: its BASIS block is not the set it was trained with")
             for n in range(nmax[(spe, l)]):
+                if weights is None:
+                    C[(spe, l, n)] = psi_nm[(spe, l)][:, n]
+                    continue
                 if cart is not None:
                     Mcut = psi_nm[(cart, spe, l)].shape[1]
                     C[(spe, l, n)] = np.dot(psi_nm[(cart, spe, l)], weights[isize:isize + Mcut])
@@ -431,6 +438,46 @@ def compute_density_descriptor_structure(
                 )
                 psi_nm[(spe, lam)] = np.dot(kernel_nm, Vmat[(lam, spe)])
 
+    return psi_nm
+
+def compute_density_folded_structure(
+    iconf: int,
+    iconf_idx: int,
+    atom_idx: Dict,
+    natom_dict: Dict,
+    lmax: Dict,
+    species: List[str],
+    zeta: float,
+    pvec: Dict[int, np.ndarray],
+    model: Dict[str, Any]) -> Dict:
+    """
+    psi W^T of a folded model (pack_model --fold) for a single structure: rows (atom, m), one column
+    per n, for compute_prediction with weights=None. The blocks are those of pack_model.pack_folded:
+      zeta = 1:  p ENVW^T.
+      zeta != 1: K PROJW with the kernel K from FEATL below the lambda GENV starts at, from there on
+                 sum_f p[(a,m), f] H[a, n ncut + f] with H = k0^(zeta-1) GENV.
+    """
+    psi_nm = {}
+    for spe in species:
+        na = natom_dict[(iconf, spe)]
+        for lam in range(lmax[spe] + 1):
+            d, key = 2 * lam + 1, str(lam)
+            featsize = pvec[lam].shape[-1]
+            p = pvec[lam][iconf_idx, atom_idx[(iconf, spe)]].reshape(na * d, featsize)
+            if zeta == 1:
+                psi_nm[(spe, lam)] = p @ model['envw'][spe][key].T
+                continue
+            if lam == 0:
+                k0w = (p @ model['featl'][spe][key].T) ** (zeta - 1)
+            M = k0w.shape[1]
+            if key in model['featl'][spe]:
+                # lambda = 0 too: k0 k0^(zeta-1)
+                kernel = (p @ model['featl'][spe][key].T).reshape(na, d, M, d) * k0w[:, np.newaxis, :, np.newaxis]
+                psi_nm[(spe, lam)] = kernel.reshape(na * d, M * d) @ model['projw'][spe][key]
+            else:
+                G = model['genv'][spe][key]
+                H = (k0w @ G).reshape(na, G.shape[1] // featsize, featsize)
+                psi_nm[(spe, lam)] = (p.reshape(na, d, featsize) @ H.transpose(0, 2, 1)).reshape(na * d, H.shape[1])
     return psi_nm
 
 def compute_density_response_descriptor_structure(
@@ -1254,7 +1301,7 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
     if rank == 0:
         print(f"\nReading structures from {xyz_file}...")
     
-    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, natoms, natmax = read_system(
+    species, lmax, nmax, lmax_max, nnmax, ndata, atomic_symbols, _, natoms, natmax = read_system(
         xyz_file, species, dfbasis, basis_data=model.get('basis')
     )
     
@@ -1290,13 +1337,14 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
     frames = read(xyz_file, ":")
     frames_local = [frames[i] for i in conf_range]
 
-    # Extract model data
-    weights = model['weights']
+    # Extract model data; a folded model (pack_model --fold) has ENVW or FEATL/PROJW/GENV in place of these
+    folded = 'weights' not in model
+    weights = model.get('weights')
     wigners = model.get('wigners', [])
     averages = model.get('averages', {})
     fps_data = model.get('fps', [])
-    feats = model['feats']
-    projectors = model['projectors']
+    feats = model.get('feats', {})
+    projectors = model.get('projectors', {})
 
     # Setup hyperparameters
     HP1 = {
@@ -1356,7 +1404,7 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
         power_env_sparse = {}
         Mspe = {}
 
-        for spe in species:
+        for spe in [] if folded else species:
             if spe not in feats or spe not in projectors:
                 if rank == 0:
                     print(f"Warning: Missing data for species {spe}")
@@ -1371,6 +1419,10 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
 
                 if lam == 0:
                     Mspe[spe] = power_env_sparse[(lam, spe)].shape[0]
+                if zeta == 1:
+                    # compute_density_descriptor_structure takes V^T F for zeta = 1, as get_feats_projs gives it
+                    V = Vmat[(lam, spe)]
+                    power_env_sparse[(lam, spe)] = V.T @ power_env_sparse[(lam, spe)][:V.shape[0]]
 
         # Compute predictions for density
         if rank == 0:
@@ -1382,11 +1434,15 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
             
             start = time.time()
 
-            psi_nm = compute_density_descriptor_structure(
-                iconf, i, conf_range, atom_idx, natom_dict,
-                lmax, species, zeta, pvec, power_env_sparse, Vmat, Mspe,
-                average=use_average, av_coefs=averages if use_average else None
-            )
+            if folded:
+                psi_nm = compute_density_folded_structure(
+                    iconf, i, atom_idx, natom_dict, lmax, species, zeta, pvec, model)
+            else:
+                psi_nm = compute_density_descriptor_structure(
+                    iconf, i, conf_range, atom_idx, natom_dict,
+                    lmax, species, zeta, pvec, power_env_sparse, Vmat, Mspe,
+                    average=use_average, av_coefs=averages if use_average else None
+                )
 
             pred_coefs = compute_prediction(
                         i, atomic_symbols, natoms, lmax, nmax, species, psi_nm, weights,
