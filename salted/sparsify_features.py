@@ -124,36 +124,28 @@ def build():
         # Compute complex to real transformation matrix for the given lambda value
         c2r = sph_utils.complex_to_real_transformation([2 * lam + 1])[0]
 
-        
-        featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
-        print(f"lambda = {lam}, feature space size = {featsize}")
-
-        if ncut >= featsize:
-            print(
-                f"ERROR: requested number of sparse features larger than total feature space size: "
-                f"{ncut} > {featsize}. Please remove the inp.descriptor.sparsify section or reduce ncut value."
-            )
-            sys.exit(1)
-            
         # compute normalized equivariant descriptor
         # lowmem: drop rows that are zero for every atom (species pairs that
         # never co-occur) and free p_lambda before p_lambda+1 is allocated.
         keep = fps_kept_rows(v1, v2, llmax)
         rows = np.flatnonzero(keep)
-        print(f"lambda = {lam}, rows kept for FPS = {len(rows)} of {featsize}")
+        
         if ncut >= len(rows):
-            rows = np.arange(featsize)
-            pvec = equicombfps(
-                natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
-                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize,
+            print(
+                f"ERROR: requested number of sparse features larger than total feature space size: "
+                f"{ncut} > {len(rows)}. Please remove the inp.descriptor.sparsify section or reduce ncut value."
             )
+            sys.exit(1)
+        
+        featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
+        print(f"lambda = {lam}, rows kept for FPS = {len(rows)} of {featsize}")
+        if len(rows) == featsize:
+            rows = np.arange(featsize)
+            pvec = equicombfps(natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize)
         else:
             rowmap = np.full(featsize, -1, dtype=np.int64)
             rowmap[rows] = np.arange(len(rows))
-            pvec = equicombfps_rows(
-                natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
-                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, rowmap, len(rows),
-            )
+            pvec = equicombfps_rows(natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2, v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, rowmap, len(rows))
         vfps = rows[do_fps(pvec, ncut, verbose=inp.salted.verbose)]
         del pvec
         np.save(osp.join(sdir, f"fps{ncut}-{lam}.npy"), vfps)
