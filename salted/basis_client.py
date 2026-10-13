@@ -5,6 +5,53 @@ from typing import TypedDict
 
 import yaml
 
+#FORMAT FOR BASIS:
+#Blocks start with the element symbol, then lines of the format:
+# l, exponent, coefficient, shell number
+#H
+# 0   , 12.01     , 1.0000, 0    
+# 0   , 145.01     , 0.5000, 1
+# 0   , 10.0     , 0.5000, 1   
+
+#He
+# 0   , 12, 0.5, 0
+#...
+#Helper function to read a basis, that is not supplied by PySCF, from a text file.
+def read_new_basis(filename: str, symbol: str) -> list[list]:
+    with open(filename, "r", encoding="utf-8") as f:
+        content = f.read()
+    blocks = [block for block in content.split("\n\n")]
+
+    for block in blocks:
+        lines = block.split("\n")
+
+        atom_symbol = lines[0].strip()
+
+        if atom_symbol != symbol:
+            continue
+        
+        basis = []
+        last_shell = None
+
+        for line in lines[1:]:
+            if line.startswith("#") or line == "":
+                continue
+            l_str, exp_str, coef_str, shell_str = [x.strip() for x in line.split(",")]
+            l = int(l_str)
+            exp = float(exp_str)
+            coef = float(coef_str)
+            shell = int(shell_str)
+
+            if shell != last_shell:
+                basis.append([l])
+                last_shell = shell
+
+            basis[-1].append([exp, coef])
+
+        return basis
+
+    raise ValueError(f"Symbol {symbol!r} not found in file")
+
 
 class SpeciesBasisData(TypedDict):
     """Basis data for one chemical species.

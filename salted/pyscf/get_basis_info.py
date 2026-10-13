@@ -6,10 +6,10 @@ from pyscf.gto import basis
 from salted.basis_client import (
     BasisClient,
     SpeciesBasisData,
+    read_new_basis
 )
 from salted.get_basis_info import get_parser
 from salted.sys_utils import ParseConfig
-
 
 def build(dryrun: bool = False, force_overwrite: bool = False):
     """Scheme: load density fitting basis from pyscf module,
@@ -46,7 +46,16 @@ def load_from_pyscf(species_list: list[str], qmbasis: str):
     """
     ribasis = df.addons.DEFAULT_AUXBASIS[basis._format_basis_name(qmbasis)][0]  # get the proper DF basis name in PySCF
     print(f"{species_list=}, {qmbasis=}, and the parsed {ribasis=}")
-    spe_ribasis_info = {spe: basis.load(ribasis, spe) for spe in species_list}  # load with PySCF basis module
+    spe_ribasis_info = {}
+    for symbol in species_list:
+        try:
+            spe_ribasis_info[symbol] = basis.load(ribasis, symb=symbol)
+        except basis.BasisNotFoundError:
+            try:
+                spe_ribasis_info[symbol] = read_new_basis("additional_basis", symbol)
+            except ValueError as e:
+                print(f"Basis Set for symbol {symbol!r} not found in PySCF or additional_basis file, skipping basis packing")
+                return
     """
     Each dict value is like:
         format: [angular_momentum, [exponents, coefficients], ...]
