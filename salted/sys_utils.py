@@ -561,6 +561,16 @@ def compute_Mcut(mode: str | list[int], Mspe_value: int, lmax_for_spe: int) -> d
 
 
 
+def _h5_readonly(dset):
+    """dset as a read-only memory map when its bytes lie contiguous in the file,
+    else a copy.  Every MPI rank on a node maps the same page-cache pages instead
+    of holding its own copy (Menv=6000: 8 GB per rank, the minimize_loss OOM)."""
+    off = dset.id.get_offset()
+    if dset.chunks is None and dset.compression is None and off is not None:
+        return np.asarray(np.memmap(dset.file.filename, dtype=dset.dtype, mode="r", offset=off, shape=dset.shape))
+    return dset[:]
+
+
 def get_feats_projs(species: str, lmax: dict[str, int]):
     """Load training features vectors and RKHS projection matrices"""
     inp = ParseConfig().parse_input()
@@ -576,9 +586,9 @@ def get_feats_projs(species: str, lmax: dict[str, int]):
         Mcut_spe = compute_Mcut(inp.gpr.Mcut, Mspe[spe], lmax[spe])
         for lam in range(lmax[spe] + 1):
             # load RKHS projectors
-            Vmat[(lam, spe)] = projectors["projectors"][spe][str(lam)][:]
+            Vmat[(lam, spe)] = _h5_readonly(projectors["projectors"][spe][str(lam)])
             # load sparse equivariant descriptors
-            power_env_sparse[(lam, spe)] = features["sparse_descriptors"][spe][str(lam)][:]
+            power_env_sparse[(lam, spe)] = _h5_readonly(features["sparse_descriptors"][spe][str(lam)])
             # precompute projection on RKHS if linear model
             if inp.gpr.z == 1:
                 power_env_sparse[(lam, spe)] = np.dot(
