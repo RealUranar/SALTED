@@ -1023,7 +1023,7 @@ def build():
             )
 
     start = time.time()
-
+    step_time = start
     # -------------------------------------------------------------------------
     # Preconditioner
     # -------------------------------------------------------------------------
@@ -1176,10 +1176,12 @@ def build():
                 if rank == 0:
                     print(
                         f"step {i + 1}, gradient norm: "
-                        f"{np.linalg.norm(r):.3e}, loss: {loss:.3e}",
+                        f"{np.linalg.norm(r):.3e}, loss: {loss:.3e}"
+                        f"Time per step: {((time.time() - step_time) / 50):.1f} s",
                         flush=True,
                     )
-
+                step_time = time.time()
+                
                 if np.linalg.norm(r) < gradtol:
                     break
 
