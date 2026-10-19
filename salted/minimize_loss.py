@@ -25,6 +25,20 @@ from salted.sys_utils import (
     run_or_abort,
 )
 
+def _drop_from_page_cache(root, keep):
+    """posix_fadvise(DONTNEED) on every file under root except the dir keep; no file is changed."""
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if osp.join(d, x) != keep]
+        for f in files:
+            try:
+                fd = os.open(osp.join(d, f), os.O_RDONLY)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+
 def _ram_budget(nlocal):
     """Bytes of matrices this rank keeps in RAM in mmap mode; the rest is paged
     from the node-local pack file.
@@ -776,7 +790,8 @@ def build():
     # -------------------------------------------------------------------------
 
     mem_time = time.time()
-    nlocal = comm.Split_type(MPI.COMM_TYPE_SHARED).Get_size() if parallel else 1
+    node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED) if parallel else None
+    nlocal = node_comm.Get_size() if parallel else 1
     matrices = MatrixStore(matrix_storage, saltedpath, rank, nlocal,
                            packed=bool(inp.gpr.packed_overlap))
     coef_list = []
@@ -989,6 +1004,10 @@ def build():
 
     if parallel:
         comm.Barrier()
+    
+    # Prep inputs are dead from here on; free their page cache for the spilled packs
+    if matrix_storage == "mmap" and (not parallel or node_comm.Get_rank() == 0):
+        _drop_from_page_cache(saltedpath, keep=osp.dirname(matrices.cache_dir))
 
     if rank == 0:
         print(
