@@ -362,6 +362,7 @@ def read_salted_model(filename: str) -> Dict[str, Any]:
 
         model['normalisation'] = "unit"
         if 'NORM' in blocks:
+            print("Reading normalisation...")
             f.seek(blocks['NORM'])
             model['normalisation'] = read_normalisation(f)
 

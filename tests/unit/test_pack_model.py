@@ -56,7 +56,6 @@ def test_norm_block(tmp_path, monkeypatch):
     files = {}
     for norm in ("unit", "rel_power"):
         fake_model(tmp_path, None if norm == "unit" else norm)
-        monkeypatch.setattr(pack_model, "OFFSET_TABLE_OF_CONTENTS", 5 + 4 + 4)
         pack_model.build()
         files[norm] = tmp_path / f"{norm}.salted"
         (tmp_path / "test.salted").rename(files[norm])

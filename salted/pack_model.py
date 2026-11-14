@@ -401,6 +401,8 @@ except ImportError:
     HAS_PYSCF = False
 
 def write_header(SALTED_file, version, n_blocks):
+    global OFFSET_TABLE_OF_CONTENTS
+    OFFSET_TABLE_OF_CONTENTS = 5+4+4
     SALTED_file.write(MAGIC_NUMBER)
     SALTED_file.write(i32(int(version)))
     SALTED_file.write(i32(n_blocks))
