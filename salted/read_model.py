@@ -19,8 +19,9 @@ types_dict = {
 }
 
 MAGIC_NUMBER = b"SALTD"
-# 4 is folded (pack_model --fold, NoSpherA2 -salted_fold), which NoSpherA2 wrote as 5 until 9 Oct 2026
-SUPPORTED_VERSIONS = [1, 2, 4, 5]
+# 4 is folded (pack_model --fold, NoSpherA2 -salted_fold), which NoSpherA2 wrote as 5 until 9 Oct 2026;
+# 7 is 4 with a NORM block
+SUPPORTED_VERSIONS = [1, 2, 4, 5, 7]
 FOLDED_BLOCKS = ["ENVW", "FEATL", "PROJW", "GENV"]
 
 def read_key5(f) -> str:
@@ -222,6 +223,13 @@ def read_config(f) -> Dict[str, Any]:
     
     return config
 
+def read_normalisation(f) -> str:
+    """Read the NORM block containing the lambda-SOAP normalisation"""
+    data_type = read_i32(f)
+    if types_dict[data_type] != "str":
+        raise ValueError(f"Expected str data type for normalisation, got {types_dict[data_type]}")
+    return f.read(read_i32(f)).decode('utf-8')
+
 def read_basis(f) -> Dict[str, Dict[str, np.ndarray]]:
     """Read the BASIS block containing basis set information"""
     try:
@@ -292,6 +300,7 @@ def read_salted_model(filename: str) -> Dict[str, Any]:
         - 'envw', 'featl', 'projw', 'genv': a folded model's blocks in place of
           feats, projectors and weights (see pack_model.pack_folded)
         - 'basis': Basis set information (if available)
+        - 'normalisation': lambda-SOAP normalisation, "unit" if the file has no NORM block
     """
     model = {}
     
@@ -350,7 +359,12 @@ def read_salted_model(filename: str) -> Dict[str, Any]:
             print("Reading basis sets...")
             f.seek(blocks['BASIS'])
             model['basis'] = read_basis(f)
-    
+
+        model['normalisation'] = "unit"
+        if 'NORM' in blocks:
+            f.seek(blocks['NORM'])
+            model['normalisation'] = read_normalisation(f)
+
     return model
 
 def print_model_summary(model: Dict[str, Any]):

@@ -90,6 +90,14 @@ Now the different sections of the file are explained in more detail:
             float64: float64
             str: SLEN (int32, byte length), then SLEN bytes UTF-8
 
+#### NORM (only if `descriptor.normalisation` is not `unit`; the file is then VERSION 7)
+
+    TYPE (int32): str
+    SLEN (int32): byte length
+    VALUE (SLEN bytes, UTF-8), e.g. b"rel_power"
+
+A file without a NORM block is `unit`.
+
 #### BASIS (Only if pyscf is installed)
 
     TYPE (int32): float64 (tag for numeric arrays in this block)

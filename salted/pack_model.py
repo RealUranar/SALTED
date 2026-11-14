@@ -294,6 +294,21 @@ def pack_model_info(SALTED_file, inp, debug: bool = False):
     write_chunk_location(SALTED_file, "CONFG", begin_of_block)
 
 
+#Written only for a normalisation other than "unit" (VERSION 7); a file without it is "unit"
+#Format:
+#TYPE_OF_DATA (4 bytes, int32)
+#nbytes (4 bytes, int32)
+#value (nbytes, utf-8 str)
+def pack_normalisation(SALTED_file, inp, debug: bool = False):
+    if debug: print("Writing Normalisation")
+    begin_of_block = SALTED_file.tell()
+    enc = inp.descriptor.normalisation.encode("utf-8")
+    SALTED_file.write(i32(int(types_dict["str"])))
+    SALTED_file.write(i32(len(enc)))
+    SALTED_file.write(enc)
+    write_chunk_location(SALTED_file, "NORM", begin_of_block)
+
+
 def preprocess_shells(basis):
     contractions_per_shell = []
     angular_momenta_per_shell = []
@@ -376,6 +391,7 @@ def pack_basis(SALTED_file, inp, debug: bool = False):
 
 MAGIC_NUMBER = b"SALTD"  # 5-byte identifier
 VERSION = 4
+VERSION_NORM = 7  # VERSION 4 with a NORM block
 HAS_PYSCF = False
 try:
     import pyscf
@@ -395,10 +411,13 @@ def build(debug: bool = False):
     inp = ParseConfig().parse_input()
     path = inp.salted.saltedpath
     model_blocks = (["ENVW"] if inp.gpr.z == 1.0 else ["FEATL", "PROJW", "GENV"])
-    n_blocks = 4 + len(model_blocks) + HAS_PYSCF
+    has_norm = inp.descriptor.normalisation != "unit"
+    n_blocks = 4 + len(model_blocks) + HAS_PYSCF + has_norm
     with open(f"{inp.salted.saltedname}.salted", "wb") as f:
-        write_header(f, VERSION, n_blocks)
+        write_header(f, VERSION_NORM if has_norm else VERSION, n_blocks)
         pack_model_info(f, inp, debug)
+        if has_norm:
+            pack_normalisation(f, inp, debug)
         pack_averages(f, path, debug)
         pack_wigners(f, path, inp, debug)
         pack_fps(f, path, inp, debug)
