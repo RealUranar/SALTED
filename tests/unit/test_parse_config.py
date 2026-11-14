@@ -64,6 +64,21 @@ def test_defaults_are_applied(tmp_path, monkeypatch):
     assert inp.descriptor.sparsify.ncut == 0
 
 
+@pytest.mark.parametrize("value, ok", [(None, True), ("rel_power", True), ("relpower", False)])
+def test_descriptor_normalisation(tmp_path, monkeypatch, value, ok):
+    """None: the key is left out and defaults to unit"""
+    data = yaml.safe_load(yaml.safe_dump(MINIMAL_INP))
+    if value is not None:
+        data["descriptor"]["normalisation"] = value
+    write_inp(tmp_path, data)
+    monkeypatch.chdir(tmp_path)
+    if ok:
+        assert ParseConfig().parse_input().descriptor.normalisation == (value or "unit")
+    else:
+        with pytest.raises(Exception):
+            ParseConfig().parse_input()
+
+
 def test_missing_required_field_raises(tmp_path, monkeypatch):
     broken = yaml.safe_load(yaml.safe_dump(MINIMAL_INP))
     del broken["gpr"]["Menv"]

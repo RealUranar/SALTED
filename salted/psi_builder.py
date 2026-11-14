@@ -53,6 +53,7 @@ class PsiBuilder:
         self.neighspe1, self.neighspe2 = inp.descriptor.rep1.neighspe, inp.descriptor.rep2.neighspe
         self.ncut = inp.descriptor.sparsify.ncut
         self.sparsify = self.ncut > 0
+        self.normalisation = inp.descriptor.normalisation
         self.nspe1 = len(inp.descriptor.rep1.neighspe)
         self.nspe2 = len(inp.descriptor.rep2.neighspe)
         
@@ -137,8 +138,15 @@ class PsiBuilder:
         v2 = np.transpose(omega2, (1, 3, 0, 2)).copy()
 
         power = {}
+        norm0 = np.empty(0)
         for lam in range(self.lmax_max + 1):
             llmax, llvec, wigner3j, c2r = self.per_lam[lam]
+
+            # rel_power: lambda > 0 is divided by the length of lambda = 0
+            if lam == 0 and self.normalisation == "rel_power":
+                norm0 = sph_utils.lam0_norm(
+                    natoms, self.nang1, self.nang2, self.nspe1 * self.nrad1,
+                    self.nspe2 * self.nrad2, v1, v2, wigner3j, llmax, llvec)
 
             if self.sparsify:
                 featsize = self.nspe1 * self.nspe2 * self.nrad1 * self.nrad2 * llmax
@@ -146,14 +154,14 @@ class PsiBuilder:
                 p = sph_utils.equicombsparse_numba(
                     natoms, self.nang1, self.nang2, self.nspe1 * self.nrad1,
                     self.nspe2 * self.nrad2, v1, v2, wigner3j, llmax, llvec, lam, c2r,
-                    featsize, nfps, self.vfps[lam])
+                    featsize, nfps, self.vfps[lam], norm0)
                 featsize = self.ncut
             else:
                 featsize = self.nspe1 * self.nspe2 * self.nrad1 * self.nrad2 * llmax
                 p = sph_utils.equicomb_numba(
                     natoms, self.nang1, self.nang2, self.nspe1 * self.nrad1,
                     self.nspe2 * self.nrad2, v1, v2, wigner3j, llmax, llvec, lam, c2r,
-                    featsize)
+                    featsize, norm0)
 
             if lam == 0:
                 power[lam] = p.reshape(natoms, featsize)

@@ -57,7 +57,8 @@ def compute_equivariant_descriptors(
     sparsify: bool = False,
     ncut: int = None,
     vfps: Optional[Dict] = None,
-    rank: int = 0) -> Dict[int, np.ndarray]:
+    rank: int = 0,
+    normalisation: str = "unit") -> Dict[int, np.ndarray]:
     """
     Compute equivariant descriptors for all atoms.
     
@@ -90,6 +91,7 @@ def compute_equivariant_descriptors(
 
     # Compute equivariant descriptors for each lambda
     pvec = {}
+    norm0 = np.empty(0)
     for lam in range(lmax_max + 1):
         if rank == 0:
             print(f"lambda = {lam}", flush=True)
@@ -116,20 +118,27 @@ def compute_equivariant_descriptors(
         # Complex to real transformation
         c2r = sph_utils.complex_to_real_transformation([2 * lam + 1])[0]
 
+        # rel_power: lambda > 0 is divided by the length of lambda = 0
+        if lam == 0 and normalisation == "rel_power":
+            norm0 = sph_utils.lam0_norm(
+                natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
+                v1, v2, wigner3j, llmax, llvec
+            )
+
         # Compute combined features
         if sparsify and vfps is not None and lam in vfps:
             featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
             nfps_val = len(vfps[lam])
             p = sph_utils.equicombsparse_numba(
                 natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
-                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, nfps_val, vfps[lam]
+                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, nfps_val, vfps[lam], norm0
             )
             featsize = ncut
         else:
             featsize = nspe1 * nspe2 * nrad1 * nrad2 * llmax
             p = sph_utils.equicomb_numba(
                 natoms_total, nang1, nang2, nspe1 * nrad1, nspe2 * nrad2,
-                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize
+                v1, v2, wigner3j, llmax, llvec, lam, c2r, featsize, norm0
             )
 
         # Store descriptors
@@ -887,6 +896,7 @@ def predict_config_mode():
             ncut=ncut,
             vfps=vfps,
             rank=rank,
+            normalisation=inp.descriptor.normalisation,
         )
         # Save descriptor if requested
         if inp.prediction.save_descriptor:
@@ -1394,6 +1404,7 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
             ncut=ncut,
             vfps=vfps if use_sparsify else None,
             rank=rank,
+            normalisation=model.get('normalisation', 'unit'),
         )
 
         if rank == 0:
