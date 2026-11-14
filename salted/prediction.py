@@ -108,6 +108,8 @@ def compute_equivariant_descriptors(
             # Standalone mode: use provided list
             if lam < len(wigners_list):
                 wigner3j = wigners_list[lam]
+            elif lam == 0 and normalisation == "rel_power":
+                raise ValueError("rel_power normalisation needs the Wigner data for lambda=0")
             else:
                 if rank == 0:
                     print(f"Warning: Missing Wigner data for lambda={lam}", flush=True)

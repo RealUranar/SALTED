@@ -940,13 +940,18 @@ def equicomb_numba(natoms,nang1,nang2,nrad1,nrad2,v1,v2,w3j,llmax,llvec,lam,c2r,
                         inner = inner + preal[imu]**2
                         ptemp[ifeat,imu] = preal[imu]
                     ifeat = ifeat + 1
-        if inner == 0.0:
+        if norm0.size > 0:
+            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
+            normfact = np.sqrt(inner)
+            if lam > 0:
+                normfact = norm0[iat]
+            if normfact == 0.0:
+                continue
+            normfact = 1 / normfact
+        elif inner == 0.0:
             normfact = 0.0
         else:
             normfact = 1 / np.sqrt(inner)
-        if norm0.size > 0 and lam > 0:
-            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
-            normfact = 1 / norm0[iat] if norm0[iat] > 0.0 else 0.0
         for ifeat in range(featsize):
             for imu in range(2*lam+1):
                 p[iat,imu,ifeat] = ptemp[ifeat,imu] * normfact
@@ -1002,13 +1007,18 @@ def equicombfps_rows(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llv
                         inner = inner + preal[imu]**2
                         ptemp[ifeat, imu] = preal[imu]
                     ifeat = ifeat + 1
-        if inner == 0.0:
+        if norm0.size > 0:
+            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
+            normfact = np.sqrt(inner)
+            if lam > 0:
+                normfact = norm0[iat]
+            if normfact == 0.0:
+                continue
+            normfact = 1 / normfact
+        elif inner == 0.0:
             normfact = 0.0
         else:
             normfact = 1 / np.sqrt(inner)
-        if norm0.size > 0 and lam > 0:
-            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
-            normfact = 1 / norm0[iat] if norm0[iat] > 0.0 else 0.0
         for ifeat in range(featsize):
             k = rowmap[ifeat]
             if k >= 0:
@@ -1050,13 +1060,18 @@ def equicombfps(natoms, nang1, nang2, nrad1, nrad2, v1, v2, w3j, llmax, llvec, l
                         inner = inner + preal[imu]**2
                         ptemp[ifeat, imu] = preal[imu]
                     ifeat = ifeat + 1
-        if inner == 0.0:
+        if norm0.size > 0:
+            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
+            normfact = np.sqrt(inner)
+            if lam > 0:
+                normfact = norm0[iat]
+            if normfact == 0.0:
+                continue
+            normfact = 1 / normfact
+        elif inner == 0.0:
             normfact = 0.0
         else:
             normfact = 1 / np.sqrt(inner)
-        if norm0.size > 0 and lam > 0:
-            # rel_power: lam > 0 is divided by |q0|; an atom without density keeps zeros
-            normfact = 1 / norm0[iat] if norm0[iat] > 0.0 else 0.0
         for ifeat in range(featsize):
             for imu in range(2*lam+1):
                 p[ifeat, iat*(2*lam+1) + imu] = ptemp[ifeat, imu] * normfact
