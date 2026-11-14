@@ -70,7 +70,8 @@ def compute_equivariant_descriptors(
     nspe2 = len(neighspe2)
     ndata = len(conf_range)
     natmax = max(natoms) if len(natoms) > 0 else 1
-    natoms_total = sum(natoms)
+    # frames holds only the structures of conf_range
+    natoms_total = sum(natoms[conf_range])
     
     start_featomic = time.time()
     
@@ -195,7 +196,8 @@ def compute_equivariant_descriptors_response(
     nspe2 = len(neighspe2)
     ndata = len(conf_range)
     natmax = max(natoms) if len(natoms) > 0 else 1
-    natoms_total = sum(natoms)
+    # frames holds only the structures of conf_range
+    natoms_total = sum(natoms[conf_range])
     
     start_featomic = time.time()
     
@@ -811,8 +813,6 @@ def predict_config_mode():
     else:
         conf_range = list(range(ndata))
     
-    reg_log10_intstr = str(int(np.log10(regul)))
-
     reg_log10_intstr = str(int(np.log10(inp.gpr.regul)))  # for consistency
 
     # load regression weights
@@ -909,13 +909,6 @@ def predict_config_mode():
         psi_nm = {}
         for i,iconf in enumerate(conf_range):
 
-            Tsize = 0
-            for iat in range(natoms[iconf]):
-                spe = atomic_symbols[iconf][iat]
-                for l in range(lmax[spe]+1):
-                    for n in range(nmax[(spe,l)]):
-                        Tsize += 2*l+1
-
             for spe in species:
 
                 Mcut = compute_Mcut(inp.gpr.Mcut, Mspe[spe], lmax[spe])
@@ -945,51 +938,8 @@ def predict_config_mode():
                         kernel_nm = kernel_nm[:, :Mcutsize[lam]]
                         psi_nm[(spe,lam)] = np.dot(kernel_nm,Vmat[(lam,spe)])
 
-            # compute predictions per channel
-            C = {}
-            ispe = {}
-            isize = 0
-            for spe in species:
-                ispe[spe] = 0
-                for l in range(lmax[spe]+1):
-                    for n in range(nmax[(spe,l)]):
-                        psi_cols = psi_nm[(spe,l)].shape[1]
-                        C[(spe,l,n)] = np.dot(psi_nm[(spe,l)],weights[isize:isize+psi_cols])
-                        isize += psi_cols
-
-            # init averages array if asked
-            if average:
-                Av_coeffs = np.zeros(Tsize)
-
-            # fill vector of predictions
-            i = 0
-            pred_coefs = np.zeros(Tsize)
-            for iat in range(natoms[iconf]):
-                spe = atomic_symbols[iconf][iat]
-                for l in range(lmax[spe]+1):
-                    for n in range(nmax[(spe,l)]):
-                        pred_coefs[i:i+2*l+1] = C[(spe,l,n)][ispe[spe]*(2*l+1):ispe[spe]*(2*l+1)+2*l+1]
-                        if average and l==0:
-                            Av_coeffs[i] = av_coefs[spe][n]
-                        i += 2*l+1
-                ispe[spe] += 1
-
-            # add back spherical averages if required
-            if average:
-                pred_coefs += Av_coeffs
-
-            if qmcode=="cp2k":
-
-                bdir = osp.join(inp.salted.saltedpath,"basis")
-                pseudocharge, rloc = read_local_pseudo(species, bdir)
-
-                # Compute charges and dipole moments
-                charge, dipole = compute_charge_and_dipole(pseudocharge,natoms[iconf],np.arange(natoms[iconf]),atomic_symbols[iconf],atomic_coords[iconf],lmax,nmax,species,charge_integrals,dipole_integrals,pred_coefs,average,False,comm)
-                print(iconf+1,charge,file=qfile)
-                print(iconf+1,dipole["x"],dipole["y"],dipole["z"],file=dfile)
-            
             pred_coefs = compute_prediction(
-                iconf_idx=i,
+                iconf_idx=iconf,
                 atomic_symbols=atomic_symbols,
                 natoms=natoms,
                 lmax=lmax,
@@ -1000,13 +950,15 @@ def predict_config_mode():
                 average=average,
                 av_coefs=av_coefs_dict)
 
-            if qmcode == "cp2k":
-                charge, dipole = compute_charge_and_dipole(
-                    frames[i], inp.qm.pseudocharge, natoms[iconf], atomic_symbols[iconf],
-                    lmax, nmax, species, charge_integrals, dipole_integrals, pred_coefs, average
-                )
-                print(iconf + 1, charge, file=qfile)
-                print(iconf + 1, dipole["x"], dipole["y"], dipole["z"], file=dfile)
+            if qmcode=="cp2k":
+
+                bdir = osp.join(inp.salted.saltedpath,"basis")
+                pseudocharge, rloc = read_local_pseudo(species, bdir)
+
+                # Compute charges and dipole moments
+                charge, dipole = compute_charge_and_dipole(pseudocharge,natoms[iconf],np.arange(natoms[iconf]),atomic_symbols[iconf],atomic_coords[iconf],lmax,nmax,species,charge_integrals,dipole_integrals,pred_coefs,average,False,comm)
+                print(iconf+1,charge,file=qfile)
+                print(iconf+1,dipole["x"],dipole["y"],dipole["z"],file=dfile)
 
             np.savetxt(osp.join(dirpath, f"COEFFS-{iconf + 1}.dat"), pred_coefs)
 
@@ -1458,7 +1410,7 @@ def predict_standalone_mode(model_file: str, xyz_file: str, output_dir: str = No
                 )
 
             pred_coefs = compute_prediction(
-                        i, atomic_symbols, natoms, lmax, nmax, species, psi_nm, weights,
+                        iconf, atomic_symbols, natoms, lmax, nmax, species, psi_nm, weights,
                         average=use_average,
                         av_coefs=averages
                     )
