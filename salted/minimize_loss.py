@@ -42,6 +42,14 @@ def _drop_from_page_cache(root, keep):
             finally:
                 os.close(fd)
 
+def _trim_heap():
+    """Return heap freed during setup to the OS; glibc otherwise keeps it per rank."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):  # not glibc
+        pass
+
+
 def _ram_budget(nlocal):
     """Bytes of matrices this rank keeps in RAM in mmap mode; the rest is paged
     from the node-local pack file.
@@ -1126,6 +1134,7 @@ def build():
     # remain live because the average-density branch uses them later.
     del atomic_coords, atom_per_spe, natoms_per_spe
     gc.collect()
+    _trim_heap()
 
     if parallel:
         comm.Barrier()
@@ -1193,6 +1202,7 @@ def build():
                 f"spread {spread:.1f}x",
                 flush=True,
             )
+        _trim_heap()
     else:
         P = np.ones(totsize)
 
