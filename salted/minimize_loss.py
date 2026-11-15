@@ -1124,26 +1124,6 @@ def build():
         alpha = delnew / curv
         w = w + alpha * d
 
-        if (i + 1) % 50 == 0 and rank == 0:
-            np.save(
-                osp.join(
-                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
-                ),
-                w,
-            )
-            np.save(
-                osp.join(
-                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
-                ),
-                d,
-            )
-            np.save(
-                osp.join(
-                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
-                ),
-                r,
-            )
-
         if (i + 1) % 50 == 0:
             loss_old = loss.copy()
             loss = loss_func(w, matrices, coef_list)
@@ -1208,6 +1188,27 @@ def build():
             delnew = np.dot(r, s)
             beta = delnew / delold
             d = s + beta * d
+
+        # w, d and r of the same step, so a restart continues the run exactly
+        if (i + 1) % 50 == 0 and rank == 0:
+            np.save(
+                osp.join(
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                ),
+                w,
+            )
+            np.save(
+                osp.join(
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                ),
+                d,
+            )
+            np.save(
+                osp.join(
+                    saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
+                ),
+                r,
+            )
 
     # -------------------------------------------------------------------------
     # Final save
