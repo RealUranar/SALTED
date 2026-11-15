@@ -83,9 +83,11 @@ class PsiBuilder:
         self.Vmat, self.Mspe, self.power_env_sparse = get_feats_projs(self.species, self.lmax)
 
         self.cuml_Mcut = {}
+        self.ncol = {}
         self.totsize = 0
         for spe in self.species:
             for lam in range(self.lmax[spe] + 1):
+                self.ncol[(spe, lam)] = self.Vmat[(lam, spe)].shape[1]
                 for n in range(self.nmax[(spe, lam)]):
                     self.cuml_Mcut[(spe, lam, n)] = self.totsize
                     self.totsize += self.Vmat[(lam, spe)].shape[1]
@@ -112,6 +114,19 @@ class PsiBuilder:
         self.reps_equivalent = sph_utils.reps_equivalent(
             self.rep1, self.neighspe1, self.HP1, self.rep2, self.neighspe2, self.HP2
         )
+
+    def matrix_bytes(self, iconf: int, itemsize: int = 8) -> int:
+        """Bytes of structure iconf's PsiBlocks (values and table) and packed
+        overlap, from the system tables alone (no Psi is built)."""
+        vals = rows = nblk = 0
+        for spe in self.atomic_symbols[iconf]:
+            if spe not in self.species:
+                continue
+            for lam in range(self.lmax[spe] + 1):
+                vals += (2 * lam + 1) * self.ncol[(spe, lam)]
+                rows += self.nmax[(spe, lam)] * (2 * lam + 1)
+                nblk += self.nmax[(spe, lam)]
+        return itemsize * (vals + rows * (rows + 1) // 2) + 5 * 8 * nblk
 
     def build(self, iconf: int, structure) -> sparse.coo_matrix:
         return self.coo_from_blocks(iconf, *self.build_blocks(iconf, structure))

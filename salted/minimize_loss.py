@@ -25,6 +25,7 @@ from salted.sys_utils import (
     read_frames,
     read_system,
     run_or_abort,
+    split_by_cost,
 )
 
 def _drop_from_page_cache(root, keep):
@@ -671,12 +672,29 @@ def build():
     if parallel:
         comm.Barrier()
 
+    if saltedtype == "density":
+        psi_builder = PsiBuilder(
+            rank,
+            system=(
+                species, lmax, nmax, lmax_max, nnmax, ndata,
+                atomic_symbols, atomic_coords, natoms, natmax,
+            ),
+            atom_info=(atom_per_spe, natoms_per_spe),
+        )
+
     # Distribute structures to tasks
     ntraintot = int(inp.gpr.trainfrac * Ntrain)
 
     if parallel:
         check_MPI_tasks_count(comm, ntraintot, "training structures")
-        trainrange = distribute_jobs(comm, train_indices[:ntraintot])
+        if saltedtype == "density":
+            # The slowest rank sets the step time, and a rank's step time and
+            # memory follow the bytes of its matrices, not its structure count.
+            jobs = train_indices[:ntraintot]
+            cut = split_by_cost([psi_builder.matrix_bytes(i) for i in jobs], size)
+            trainrange = jobs[cut[rank]:cut[rank + 1]]
+        else:
+            trainrange = distribute_jobs(comm, train_indices[:ntraintot])
         if inp.salted.verbose:
             print(f"Task {rank} handles the following structures: {format_index_ranges(trainrange,True)}", flush=True)
     else:
@@ -919,14 +937,6 @@ def build():
     # controls only whether the generated matrices remain in RAM or are cached
     # as mmap-able files.
     if saltedtype == "density":
-        psi_builder = PsiBuilder(
-            rank,
-            system=(
-                species, lmax, nmax, lmax_max, nnmax, ndata,
-                atomic_symbols, atomic_coords, natoms, natmax,
-            ),
-            atom_info=(atom_per_spe, natoms_per_spe),
-        )
         frames = read_frames(inp.system.filename)
         if use_blocks and fast_minimizer:
             precond_diag = np.zeros(psi_builder.totsize)

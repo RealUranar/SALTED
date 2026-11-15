@@ -367,6 +367,28 @@ def distribute_jobs(comm, jobs: list | np.ndarray, root: int = 0) -> list | np.n
     return my_jobs
 
 
+def split_by_cost(costs, size: int) -> np.ndarray:
+    """
+    Cut a list of jobs into ``size`` contiguous ranges of about equal total cost.
+
+    Job j goes to the range in which its cost midpoint falls; every range gets at
+    least one job.  Integer arithmetic, so every rank computes the same cuts.
+
+    Returns:
+        np.ndarray: ``size + 1`` start indices; range r is ``cut[r]:cut[r + 1]``.
+    """
+    c = np.asarray(costs, dtype=np.int64)
+    n = c.shape[0]
+    if n < size:
+        raise ValueError(f"cannot split {n} jobs over {size} ranks")
+    mid2 = 2 * np.cumsum(c) - c  # twice the midpoint of each job's cost
+    cut = np.searchsorted(mid2 * size, 2 * c.sum() * np.arange(size))
+    r = np.arange(size)
+    # at least one job per range: cut[r] >= cut[r - 1] + 1 and cut[r] <= n - size + r
+    cut = np.minimum(r + np.maximum.accumulate(cut - r), n - size + r)
+    return np.append(cut, n)
+
+
 def get_conf_range(rank, size, ntest, testrangetot) -> list[list[int]]:
     """
     DEPRECATED: Please use `distribute_jobs` instead.

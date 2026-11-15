@@ -108,3 +108,18 @@ def test_kernel_independent_of_threads():
     finally:
         numba.set_num_threads(nt)
     assert np.array_equal(one, _curv(kargs, d))
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+def test_matrix_bytes_matches_stored(dtype):
+    """PsiBuilder.matrix_bytes (used to split structures over ranks) against the arrays actually stored."""
+    from salted.psi_builder import PsiBuilder
+
+    pb = SimpleNamespace(species=SPECIES, lmax=LMAX, nmax=NMAX, ncol=MCUT, atomic_symbols=dict(enumerate(STRUCTS)))
+    rng = np.random.default_rng(2)
+    for k, symbols in enumerate(STRUCTS + [["H", "Na", "O"]]):  # Na: not a target species, no rows
+        p = make_psi([s for s in symbols if s in SPECIES], rng)
+        n = p.shape[0]
+        stored = p.vals.astype(dtype).nbytes + p.tab.nbytes + np.dtype(dtype).itemsize * n * (n + 1) // 2
+        pb.atomic_symbols[k] = symbols
+        assert PsiBuilder.matrix_bytes(pb, k, np.dtype(dtype).itemsize) == stored

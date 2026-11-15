@@ -1,8 +1,9 @@
 """Unit tests for MPI-related helpers in salted.sys_utils (serial code paths)."""
 
 import numpy as np
+import pytest
 
-from salted.sys_utils import detect_mpi, distribute_jobs
+from salted.sys_utils import detect_mpi, distribute_jobs, split_by_cost
 
 
 def test_detect_mpi_serial():
@@ -64,3 +65,29 @@ def test_distribute_jobs_preserves_type():
     comm2 = FakeComm(2)
     out2 = distribute_jobs(comm2, [0, 1, 2, 3, 4])
     assert isinstance(out2, list)
+
+
+def _check_partition(cut, n, size):
+    assert cut.shape == (size + 1,)
+    assert cut[0] == 0 and cut[-1] == n
+    assert np.all(np.diff(cut) >= 1)  # contiguous, every job once, no rank empty
+
+
+def test_split_by_cost_balances_bytes():
+    rng = np.random.default_rng(0)
+    costs = (rng.lognormal(17, 0.6, size=2200)).astype(np.int64)
+    size = 46
+    cut = split_by_cost(costs, size)
+    _check_partition(cut, len(costs), size)
+    load = np.add.reduceat(costs, cut[:-1])
+    # midpoint rule: a range exceeds its share by at most one job
+    assert load.max() <= costs.sum() / size + costs.max()
+    count = [c.sum() for c in np.array_split(costs, size)]
+    assert load.max() < max(count)
+
+
+def test_split_by_cost_never_leaves_a_rank_empty():
+    for costs, size in [([10**9, 1, 1, 1], 4), ([1, 1, 10**9, 1, 1], 3), ([0, 0, 0, 0, 0], 5), ([5] * 7, 3)]:
+        _check_partition(split_by_cost(costs, size), len(costs), size)
+    with pytest.raises(ValueError):
+        split_by_cost([1, 2], 3)
