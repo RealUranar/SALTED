@@ -13,6 +13,7 @@ from numba.typed import List
 from scipy import sparse
 
 from salted import get_averages
+from salted.precond_kron import kron_precond
 from salted.psi_builder import PsiBlocks, PsiBuilder
 from salted.selection_utils import load_training_indices
 from salted.sys_utils import (
@@ -653,10 +654,11 @@ def build():
             f"got {matrix_storage!r}"
         )
     matrix_dtype = np.dtype(inp.gpr.matrix_dtype)
+    precond_kind = inp.gpr.preconditioner
 
     comm, size, rank, parallel = detect_mpi()
 
-    # gpr.fast_minimizer (default true): Jacobi-preconditioned CG with
+    # gpr.fast_minimizer (default true): preconditioned CG (gpr.preconditioner) with
     # buffer-based collectives. Same linear system, same gradtol, same
     # solution - different iterate path, so set it false to bit-reproduce a
     # model built before this existed.
@@ -1108,6 +1110,9 @@ def build():
                         flush=True,
                     )
 
+        # (c0, nmax, nc) per (species, lam) for the block preconditioner
+        col_blocks = [(psi_builder.cuml_Mcut[(spe, lam, 0)], psi_builder.nmax[(spe, lam)], nc)
+                      for (spe, lam), nc in psi_builder.ncol.items() if nc and psi_builder.nmax[(spe, lam)]]
         # PsiBuilder and the complete ASE frame list are no longer used during
         # minimisation in either storage mode.
         del psi_builder, frames
@@ -1214,7 +1219,7 @@ def build():
                 / diag_hessian[~bad].min()
             )
             print(
-                f"Jacobi preconditioner active (gpr.fast_minimizer): "
+                f"Jacobi diagonal (gpr.fast_minimizer): "
                 f"built in {time.time() - _tp:.1f} s, diag range "
                 f"[{diag_hessian[~bad].min():.3e}, "
                 f"{diag_hessian[~bad].max():.3e}], "
@@ -1224,6 +1229,41 @@ def build():
         _trim_heap()
     else:
         P = np.ones(totsize)
+
+    def precond(r):
+        return np.multiply(P, r)
+
+    if fast_minimizer and precond_kind == "kronc" and precond_diag is None:
+        if rank == 0:
+            print("gpr.preconditioner 'kronc' needs saltedtype density with PsiBlocks; using Jacobi", flush=True)
+    elif fast_minimizer and precond_kind == "kronc":
+        _tp = time.time()
+        order = None
+        if parallel:
+            # alternate nodes, so the largest units land on different nodes
+            where = comm.allgather((node_comm.Get_rank(), node_comm.bcast(rank)))
+            order = sorted(range(size), key=lambda q: where[q])
+        precond = kron_precond(matrices, totsize, col_blocks, norm, regul, diag_hessian,
+                               comm if parallel else None, order)
+        _trim_heap()
+        mem = comm.gather(precond.nbytes, root=0) if parallel else [precond.nbytes]
+        t_fac = comm.reduce(precond.t_fac, op=MPI.MAX, root=0) if parallel else precond.t_fac
+        try:
+            import resource
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+        except ImportError:  # not POSIX
+            rss = float("nan")
+        rss = comm.gather(rss, root=0) if parallel else [rss]
+        if rank == 0:
+            mem = np.array(mem) / 2**30
+            print(
+                f"Kronecker block preconditioner active (gpr.preconditioner='kronc'): "
+                f"{precond.nblocks} blocks (largest {precond.max_block} columns), {precond.nunits} factors, "
+                f"built in {time.time() - _tp:.1f} s (sums {precond.t_sum:.1f} s, Cholesky max/rank {t_fac:.1f} s); "
+                f"factor memory total {mem.sum():.2f} GiB, max/rank {mem.max():.2f} GiB (rank {int(mem.argmax())}); "
+                f"peak RSS max/rank {max(rss):.2f} GiB (rank {int(np.argmax(rss))})",
+                flush=True,
+            )
 
     reg_log10_intstr = str(int(np.log10(regul)))
 
@@ -1249,7 +1289,7 @@ def build():
             w = np.load(wpath)
             d = np.load(dpath)
             r = np.load(rpath)
-            s = np.multiply(P, r)
+            s = precond(r)
             delnew = np.dot(r, s)
             loss = loss_func(w, matrices, coef_list)
         else:
@@ -1262,7 +1302,7 @@ def build():
         w = np.ones(totsize) * 1e-04
         loss = loss_func(w, matrices, coef_list)
         r = -grad_func(w, matrices, coef_list)
-        d = np.multiply(P, r)
+        d = precond(r)
         delnew = np.dot(r, d)
 
     # -------------------------------------------------------------------------
@@ -1301,7 +1341,7 @@ def build():
                 if np.linalg.norm(r) < gradtol:
                     break
 
-                d = np.multiply(P, r)
+                d = precond(r)
                 delnew = np.dot(r, d)
 
             else:
@@ -1319,7 +1359,7 @@ def build():
                 if np.linalg.norm(r) < gradtol:
                     break
 
-                s = np.multiply(P, r)
+                s = precond(r)
                 delold = delnew.copy()
                 delnew = np.dot(r, s)
                 beta = delnew / delold
@@ -1337,7 +1377,7 @@ def build():
                     )
                 break
 
-            s = np.multiply(P, r)
+            s = precond(r)
             delold = delnew.copy()
             delnew = np.dot(r, s)
             beta = delnew / delold
@@ -1388,6 +1428,9 @@ def build():
             r,
         )
 
+        if hasattr(precond, "n_apply") and precond.n_apply:
+            print(f"preconditioner: {precond.n_apply} applications, mean {precond.t_apply / precond.n_apply:.3f} s "
+                  "(rank 0, incl. Allreduce)", flush=True)
         print("minimization completed succesfully!")
         print(
             f"minimization time: {((time.time() - start) / 60):.2f} minutes"

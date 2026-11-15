@@ -144,3 +144,18 @@ def test_gpr_matrix_dtype(tmp_path, monkeypatch, value, ok):
     else:
         with pytest.raises(Exception):
             ParseConfig().parse_input()
+
+
+@pytest.mark.parametrize("value, ok", [(None, True), ("jacobi", True), ("super", False)])
+def test_gpr_preconditioner(tmp_path, monkeypatch, value, ok):
+    """None: the key is left out and defaults to kronc"""
+    data = yaml.safe_load(yaml.safe_dump(MINIMAL_INP))
+    if value is not None:
+        data["gpr"]["preconditioner"] = value
+    write_inp(tmp_path, data)
+    monkeypatch.chdir(tmp_path)
+    if ok:
+        assert ParseConfig().parse_input().gpr.preconditioner == (value or "kronc")
+    else:
+        with pytest.raises(Exception):
+            ParseConfig().parse_input()

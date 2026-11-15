@@ -1032,6 +1032,12 @@ class ParseConfig:
                     str,
                     lambda inp, val: val in ("float64", "float32"),
                 ),  # storage type of the Psi values and packed overlaps in minimize_loss; sums stay float64
+                "preconditioner": (
+                    False,
+                    "kronc",
+                    str,
+                    lambda inp, val: val in ("kronc", "jacobi"),
+                ),  # CG preconditioner of minimize_loss (with fast_minimizer)
                 "sparse_algorithm": (
                     False,
                     "numba",
