@@ -125,7 +125,7 @@ class PsiBuilder:
             for lam in range(self.lmax[spe] + 1):
                 vals += (2 * lam + 1) * self.ncol[(spe, lam)]
                 rows += self.nmax[(spe, lam)] * (2 * lam + 1)
-                nblk += self.nmax[(spe, lam)]
+                nblk += self.nmax[(spe, lam)] if self.ncol[(spe, lam)] else 0
         return itemsize * (vals + rows * (rows + 1) // 2) + 5 * 8 * nblk
 
     def build(self, iconf: int, structure) -> sparse.coo_matrix:
@@ -292,9 +292,11 @@ class PsiBlocks:
     one column group, and a group is walked serially in atom order."""
 
     def __init__(self, vals, tab, shape):
+        # an Mcut = 0 block holds no values: its voff and c0 would alias the next key's
+        tab = tab[tab[:, 2] > 0]
         self.vals, self.tab, self.shape = vals, tab, shape
         # tab is sorted by first column; grp[g]:grp[g+1] are the blocks of group g.
-        self.grp = np.concatenate(([0], np.flatnonzero(np.diff(tab[:, 4])) + 1, [len(tab)]))
+        self.grp = np.unique(np.concatenate(([0], np.flatnonzero(np.diff(tab[:, 4])) + 1, [len(tab)])))
 
     @property
     def nbytes(self):

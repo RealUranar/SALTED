@@ -242,7 +242,7 @@ def _stage_psi_s(vals, aps, ubs, roff, x, e, maxblk):
     for kk in prange(npsi):
         k = np.int64(kk)
         a, b = roff[k], roff[k + 1]
-        u = np.empty(b - a)
+        u = np.zeros(b - a)  # rows of Mcut = 0 blocks are in no block
         ia = np.zeros(4, dtype=np.int32)
         fa = np.zeros(2)
         ch = np.array([ord("N"), ord("T")], dtype=np.uint8)
@@ -281,6 +281,8 @@ def _stage_psi_t(vals, ubs, roff, kptr, y, totsize, maxblk):
 def _unique_blocks(tab):
     """(voff, nr, nc, r0, c0, nmax) per stored (atom, lam) block of a
     PsiBlocks table, sorted by first column, then by value offset."""
+    if len(tab) == 0:  # no atom of a target species
+        return np.zeros((0, 6), np.int64)
     t = tab[np.lexsort((tab[:, 4], tab[:, 0]))]
     first = np.flatnonzero(np.r_[True, np.diff(t[:, 0]) != 0])
     nm = np.diff(np.r_[first, len(t)])
