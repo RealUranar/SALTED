@@ -1,3 +1,4 @@
+import ctypes
 import gc
 import hashlib
 import os
@@ -6,7 +7,8 @@ import shutil
 import time
 
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, types
+from numba.extending import get_cython_function_address, overload
 from numba.typed import List
 from scipy import sparse
 
@@ -120,81 +122,172 @@ def _spmv_upper(ap, chunks, x):
     return y
 
 
-@njit(fastmath=True)
-def _spmv_upper_serial(ap, chunks, x):
-    """_spmv_upper on one thread, same chunks and summation order."""
-    n = x.shape[0]
-    nc = chunks.shape[0] - 1
-    z = np.zeros((nc, n))
-    for c in range(nc):
-        _spmv_rows(ap, x, z[c], chunks[c], chunks[c + 1])
-    y = np.empty(n)
-    _sum_rows(z, y, 0, n)
-    return y
+# --------------------------------------------------------------------------
+# Block kernel for Psi^T S Psi products over all structures of a rank.
+#
+# Psi_k is stored as (atom, lam) blocks B (nr = 2 lam + 1 rows, nc columns),
+# one block serving all nmax radial channels n at rows r0 + n*nr and columns
+# c0 + n*nc.  Each block is read once for all its channels:
+#   z[r0 + n*nr + m]  = sum_c B[m, c] d[c0 + n*nc + c]   (Z = D B^T, dgemm)
+#   t[c0 + n*nc + c] += sum_m B[m, c] y[r0 + n*nr + m]   (T += Y B,  dgemm)
+# Psi values and packed S may be float64 or float32; sums are float64.
+# --------------------------------------------------------------------------
+
+_vp = ctypes.c_void_p
+_dgemm = ctypes.CFUNCTYPE(None, *([_vp] * 13))(
+    get_cython_function_address("scipy.linalg.cython_blas", "dgemm"))
+
+
+def _as_f64(src, scr):
+    """src as float64: src itself, or its copy in the scratch buffer scr."""
+
+
+@overload(_as_f64)
+def _as_f64_impl(src, scr):
+    if src.dtype == types.float64:
+        return lambda src, scr: src
+
+    def impl(src, scr):
+        s = scr[:src.shape[0]]
+        for i in range(src.shape[0]):
+            s[i] = src[i]
+        return s
+    return impl
 
 
 @njit
-def _blocks_dot_serial(vals, tab, x, nrows):
-    """psi_builder._blocks_dot on one thread (no fastmath: the same bits)."""
-    y = np.zeros(nrows)
-    for b in range(tab.shape[0]):
-        voff, nr, nc, r0, c0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3], tab[b, 4]
-        for m in range(nr):
-            s = 0.0
-            v0 = voff + m * nc
-            for c in range(nc):
-                v = vals[v0 + c]
-                if v != 0.0:
-                    s += v * x[c0 + c]
-            y[r0 + m] = s
-    return y
+def _z_blocks(vals, ub, d, z, ia, fa, ch, scr):
+    """z = Psi d for one structure (ub: its unique-block table)."""
+    for b in range(ub.shape[0]):
+        voff, nr, nc, r0, c0, nm = ub[b, 0], ub[b, 1], ub[b, 2], ub[b, 3], ub[b, 4], ub[b, 5]
+        blk = _as_f64(vals[voff:voff + nr * nc], scr)
+        ia[0] = nr
+        ia[1] = nm
+        ia[2] = nc
+        fa[0] = 1.0
+        fa[1] = 0.0
+        # Z^T (nr x nm) = (B^T as nc x nr)^T @ (D^T as nc x nm), column-major
+        _dgemm(ch[1:].ctypes, ch[0:].ctypes, ia[0:].ctypes, ia[1:].ctypes, ia[2:].ctypes, fa[0:].ctypes,
+               blk.ctypes, ia[2:].ctypes, d[c0:].ctypes, ia[2:].ctypes, fa[1:].ctypes,
+               z[r0:].ctypes, ia[0:].ctypes)
+
+
+@njit
+def _t_blocks(vals, ub, y, t, ia, fa, ch, scr):
+    """t += Psi^T y over the blocks in ub of one structure."""
+    for b in range(ub.shape[0]):
+        voff, nr, nc, r0, c0, nm = ub[b, 0], ub[b, 1], ub[b, 2], ub[b, 3], ub[b, 4], ub[b, 5]
+        blk = _as_f64(vals[voff:voff + nr * nc], scr)
+        ia[0] = nc
+        ia[1] = nm
+        ia[2] = nr
+        fa[0] = 1.0
+        fa[1] = 1.0
+        # T^T (nc x nm) += (B^T as nc x nr) @ (Y^T as nr x nm), column-major
+        _dgemm(ch[0:].ctypes, ch[0:].ctypes, ia[0:].ctypes, ia[1:].ctypes, ia[2:].ctypes, fa[0:].ctypes,
+               blk.ctypes, ia[0:].ctypes, y[r0:].ctypes, ia[2:].ctypes, fa[1:].ctypes,
+               t[c0:].ctypes, ia[0:].ctypes)
+
+
+@njit
+def _spmv_packed(ap, x, y):
+    """y = S x from the row-packed upper triangle ap (row i holds S[i, i:])."""
+    n = x.shape[0]
+    y[:] = 0.0
+    o = 0
+    for i in range(n):
+        m = n - i
+        r = ap[o:o + m]
+        xs = x[i:]
+        # four fixed partial sums let the reduction vectorise without fastmath
+        a0 = 0.0
+        a1 = 0.0
+        a2 = 0.0
+        a3 = 0.0
+        k = 0
+        while k + 4 <= m:
+            a0 += r[k] * xs[k]
+            a1 += r[k + 1] * xs[k + 1]
+            a2 += r[k + 2] * xs[k + 2]
+            a3 += r[k + 3] * xs[k + 3]
+            k += 4
+        while k < m:
+            a0 += r[k] * xs[k]
+            k += 1
+        xi = x[i]
+        ys = y[i + 1:]
+        for k in range(1, m):
+            ys[k - 1] += r[k] * xi
+        y[i] += (a0 + a1) + (a2 + a3)
+        o += m
 
 
 @njit(parallel=True)
-def _curv_blocks(vals, tabs, aps, chunks, roff, gptr, jobs, d, totsize):
-    """sum_k 2 Psi_k^T S_k Psi_k d over all structures k, threaded over
-    structures and then over column ranges instead of inside each product.
-
-    Every element is summed exactly as the per-structure loop
-    Ad += 2.0 * psi.rdot(S.dot(psi.dot(d))) sums it: structures in order, each
-    one's rdot from 0.0 in block order.  Same bits, any thread count."""
+def _stage_psi_s(vals, aps, ubs, roff, x, e, maxblk):
+    """Per structure k: u = Psi_k x + e_k, y_k = S_k u and part_k = u . y_k
+    (e empty: no offset).  Returns y (concatenated over k) and part."""
     npsi = len(vals)
-    w = np.empty(roff[-1])
+    y = np.empty(roff[-1])
+    part = np.empty(npsi)
     for kk in prange(npsi):
         k = np.int64(kk)
-        z = _blocks_dot_serial(vals[k], tabs[k], d, roff[k + 1] - roff[k])
-        w[roff[k]:roff[k + 1]] = _spmv_upper_serial(aps[k], chunks[k], z)
-    ad = np.zeros(totsize)
-    for j in prange(jobs.shape[0]):
-        g, ca, cb = jobs[j, 0], jobs[j, 1], jobs[j, 2]
-        tmp = np.empty(cb - ca)
+        a, b = roff[k], roff[k + 1]
+        u = np.empty(b - a)
+        ia = np.zeros(4, dtype=np.int32)
+        fa = np.zeros(2)
+        ch = np.array([ord("N"), ord("T")], dtype=np.uint8)
+        scr = np.empty(maxblk)
+        _z_blocks(vals[k], ubs[k], x, u, ia, fa, ch, scr)
+        if e.shape[0] > 0:
+            u += e[a:b]
+        yk = y[a:b]
+        _spmv_packed(aps[k], u, yk)
+        s = 0.0
+        for i in range(b - a):
+            s += u[i] * yk[i]
+        part[k] = s
+    return y, part
+
+
+@njit(parallel=True)
+def _stage_psi_t(vals, ubs, roff, kptr, y, totsize, maxblk):
+    """sum_k Psi_k^T y_k.  Threaded over (species, lam) keys, whose column
+    ranges are disjoint, each summed over structures in order: the result does
+    not depend on the thread count."""
+    npsi = len(vals)
+    t = np.zeros(totsize)
+    for g in prange(kptr.shape[1] - 1):
+        ia = np.zeros(4, dtype=np.int32)
+        fa = np.zeros(2)
+        ch = np.array([ord("N"), ord("T")], dtype=np.uint8)
+        scr = np.empty(maxblk)
         for k in range(npsi):
-            b0, b1 = gptr[k, g], gptr[k, g + 1]
-            if b0 == b1:
-                continue  # the loop adds 2.0 * 0.0 here: no change
-            tmp[:] = 0.0
-            v, tab, r = vals[k], tabs[k], roff[k]
-            for b in range(b0, b1):
-                voff, nr, nc, r0 = tab[b, 0], tab[b, 1], tab[b, 2], tab[b, 3]
-                for m in range(nr):
-                    yr = w[r + r0 + m]
-                    v0 = voff + m * nc
-                    for c in range(ca, cb):
-                        x = v[v0 + c]
-                        if x != 0.0:
-                            tmp[c - ca] += x * yr
-            c0 = tab[b0, 4]
-            for c in range(ca, cb):
-                ad[c0 + c] += 2.0 * tmp[c - ca]
-    return ad
+            b0, b1 = kptr[k, g], kptr[k, g + 1]
+            if b0 < b1:
+                _t_blocks(vals[k], ubs[k][b0:b1], y[roff[k]:roff[k + 1]], t, ia, fa, ch, scr)
+    return t
 
 
-CURV_COLS = 64  # columns per job in _curv_blocks
+def _unique_blocks(tab):
+    """(voff, nr, nc, r0, c0, nmax) per stored (atom, lam) block of a
+    PsiBlocks table, sorted by first column, then by value offset."""
+    t = tab[np.lexsort((tab[:, 4], tab[:, 0]))]
+    first = np.flatnonzero(np.r_[True, np.diff(t[:, 0]) != 0])
+    nm = np.diff(np.r_[first, len(t)])
+    pos = np.arange(len(t)) - np.repeat(first, nm)
+    g = np.repeat(np.arange(len(first)), nm)
+    ub = np.column_stack([t[first, :5], nm]).astype(np.int64)
+    if not (np.array_equal(t[:, 3], ub[g, 3] + pos * ub[g, 1])
+            and np.array_equal(t[:, 4], ub[g, 4] + pos * ub[g, 2])
+            and np.array_equal(t[:, 1], ub[g, 1]) and np.array_equal(t[:, 2], ub[g, 2])):
+        raise ValueError("PsiBlocks channels are not laid out at r0 + n*nr, c0 + n*nc")
+    return np.ascontiguousarray(ub[np.lexsort((ub[:, 0], ub[:, 4]))])
 
 
-def _curv_setup(matrices, totsize):
-    """_curv_blocks arguments when every Psi is PsiBlocks and every S is
-    PackedSym, else None (the per-structure loop then runs)."""
+def _blocks_setup(matrices, totsize):
+    """Kernel arguments (vals, aps, ubs, roff, kptr, totsize, maxblk) when
+    every Psi is PsiBlocks and every S is PackedSym, else None (the
+    per-structure loops then run)."""
     n = matrices.npsi
     if len(matrices._overlaps) != n:  # density-response: three Psi per S
         return None
@@ -208,25 +301,38 @@ def _curv_setup(matrices, totsize):
         a.flags.writeable = False
         return a
 
-    vals, tabs, aps, chunks = (List() for _ in range(4))
+    vals, aps, ubs = List(), List(), List()
     for p, o in zip(psis, ovls):
         vals.append(ro(p.vals))
-        tabs.append(ro(p.tab))
         aps.append(ro(o.ap))
-        chunks.append(ro(o.chunks))
+        ubs.append(_unique_blocks(p.tab))
     roff = np.concatenate(([0], np.cumsum([p.shape[0] for p in psis]))).astype(np.int64)
-    # Column groups (one per species, lam, n) are global; gptr[k, g]:gptr[k, g+1]
-    # are structure k's blocks of group g (empty if the species is absent).
-    starts = np.unique(np.concatenate([p.tab[:, 4] for p in psis]))
-    bounds = np.append(starts, totsize)
-    gptr = np.array([np.searchsorted(p.tab[:, 4], bounds) for p in psis], dtype=np.int64)
-    ncol = {}
-    for p in psis:
-        ncol.update(zip(p.tab[:, 4].tolist(), p.tab[:, 2].tolist()))
-    jobs = np.array([(g, a, min(a + CURV_COLS, ncol[s]))
-                     for g, s in enumerate(starts.tolist()) for a in range(0, ncol[s], CURV_COLS)],
-                    dtype=np.int64)
-    return vals, tabs, aps, chunks, roff, gptr, jobs
+    # kptr[k, g]:kptr[k, g+1] are structure k's blocks of key g (empty if the species is absent)
+    keys = np.append(np.unique(np.concatenate([u[:, 4] for u in ubs])), totsize)
+    kptr = np.array([np.searchsorted(u[:, 4], keys) for u in ubs], dtype=np.int64)
+    maxblk = int(max((u[:, 1] * u[:, 2]).max(initial=0) for u in ubs))
+    return vals, aps, ubs, roff, kptr, totsize, maxblk
+
+
+_NO_OFFSET = np.empty(0)
+
+
+def _psi_s(kargs, x, e=_NO_OFFSET):
+    """S_k (Psi_k x + e_k) concatenated over structures k, and per structure
+    (Psi_k x + e_k) . S_k (Psi_k x + e_k)."""
+    vals, aps, ubs, roff, kptr, totsize, maxblk = kargs
+    return _stage_psi_s(vals, aps, ubs, roff, np.ascontiguousarray(x, dtype=np.float64), e, maxblk)
+
+
+def _psi_t(kargs, y):
+    """sum_k Psi_k^T y_k for y concatenated over structures k."""
+    vals, aps, ubs, roff, kptr, totsize, maxblk = kargs
+    return _stage_psi_t(vals, ubs, roff, kptr, y, totsize, maxblk)
+
+
+def _curv(kargs, d):
+    """sum_k 2 Psi_k^T S_k Psi_k d."""
+    return 2.0 * _psi_t(kargs, _psi_s(kargs, d)[0])
 
 
 class PackedSym:
@@ -589,7 +695,9 @@ def build():
 
         loss = 0.0
 
-        if saltedtype == "density":
+        if kargs is not None:
+            loss = _psi_s(kargs, weights, resid0)[1].sum()
+        elif saltedtype == "density":
             for iconf in range(ntrain):
                 ref_coefs = coef_list[iconf]
 
@@ -656,7 +764,9 @@ def build():
 
         gradient = np.zeros(totsize)
 
-        if saltedtype == "density":
+        if kargs is not None:
+            gradient = 2.0 * _psi_t(kargs, _psi_s(kargs, weights, resid0)[0])
+        elif saltedtype == "density":
             for iconf in range(ntrain):
 
                 ref_coefs = coef_list[iconf]
@@ -741,8 +851,8 @@ def build():
 
         Ad = np.zeros(totsize)
 
-        if curv_args is not None:
-            Ad = _curv_blocks(*curv_args, np.ascontiguousarray(cg_dire, dtype=np.float64), totsize)
+        if kargs is not None:
+            Ad = _curv(kargs, cg_dire)
         elif saltedtype == "density":
             for iconf in range(ntrain):
                 psi = matrices.get_psi(iconf)
@@ -796,7 +906,7 @@ def build():
                            packed=bool(inp.gpr.packed_overlap))
     coef_list = []
     precond_diag = None
-    # SALTED_PSI_BLOCKS=0 restores the scipy COO Psi; both give identical bits.
+    # SALTED_PSI_BLOCKS=0 restores the scipy COO Psi (same results up to rounding).
     use_blocks = saltedtype == "density" and os.environ.get("SALTED_PSI_BLOCKS", "1") != "0"
 
     if rank == 0:
@@ -994,7 +1104,12 @@ def build():
         raise RuntimeError("No Psi matrices were prepared")
 
     totsize = matrices.psi_shape(0)[1]
-    curv_args = _curv_setup(matrices, totsize)
+    kargs = _blocks_setup(matrices, totsize)
+    # Psi w + resid0 is the residual (prediction minus reference), per structure
+    resid0 = None
+    if kargs is not None:
+        resid0 = np.concatenate([(average_list[k] if average else 0.0) - c for k, c in enumerate(coef_list)])
+        resid0 = np.ascontiguousarray(resid0, dtype=np.float64)
     norm = 1.0 / float(ntraintot)
 
     # These objects are only needed to construct Psi.  atomic_symbols/natoms
