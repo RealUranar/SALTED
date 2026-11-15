@@ -1279,24 +1279,19 @@ def build():
         wpath = osp.join(
             saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"weights_N{ntraintot}_reg{reg_log10_intstr}.npy",
         )
-        dpath = osp.join(
-            saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"dvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
-        )
-        rpath = osp.join(
-            saltedpath, rdir, f"M{Menv}_zeta{zeta}", f"rvector_N{ntraintot}_reg{reg_log10_intstr}.npy",
-        )
 
-        if osp.exists(wpath) and osp.exists(dpath) and osp.exists(rpath):
+        if osp.exists(wpath):
+            # restart from w alone: saved d and r may come from older code (w a step
+            # ahead of them) or from another preconditioner
             init = False
             w = np.load(wpath)
-            d = np.load(dpath)
-            r = np.load(rpath)
-            s = precond(r)
-            delnew = np.dot(r, s)
             loss = loss_func(w, matrices, coef_list)
+            r = -grad_func(w, matrices, coef_list)
+            d = precond(r)
+            delnew = np.dot(r, d)
         else:
             print(
-                "Warning: One or more required files to restart do not exist. "
+                f"Warning: {wpath} does not exist. "
                 "Reverting to default initialization."
             )
 
@@ -1385,7 +1380,6 @@ def build():
             beta = delnew / delold
             d = s + beta * d
 
-        # w, d and r of the same step, so a restart continues the run exactly
         if (i + 1) % 50 == 0 and rank == 0:
             np.save(
                 osp.join(
