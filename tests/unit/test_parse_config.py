@@ -129,3 +129,18 @@ def test_dfbasis_file_nonexistent_path_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(Exception):
         ParseConfig().parse_input()
+
+
+@pytest.mark.parametrize("value, ok", [(None, True), ("float32", True), ("float16", False)])
+def test_gpr_matrix_dtype(tmp_path, monkeypatch, value, ok):
+    """None: the key is left out and defaults to float64"""
+    data = yaml.safe_load(yaml.safe_dump(MINIMAL_INP))
+    if value is not None:
+        data["gpr"]["matrix_dtype"] = value
+    write_inp(tmp_path, data)
+    monkeypatch.chdir(tmp_path)
+    if ok:
+        assert ParseConfig().parse_input().gpr.matrix_dtype == (value or "float64")
+    else:
+        with pytest.raises(Exception):
+            ParseConfig().parse_input()

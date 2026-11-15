@@ -411,14 +411,22 @@ def _precond_add_blocks(diag_hessian, psi, ovlp):
     """_precond_add for a PsiBlocks psi: one dense S_gg V_g product per column
     group g (species, lam, n), V_g being that group's stacked kernel blocks.
     Same sum in BLAS order: differs from _precond_add in the last bits only,
-    which moves the CG path, not the gradtol it converges to."""
+    which moves the CG path, not the gradtol it converges to.
+
+    ovlp is the dense overlap; with Psi stored below float64 its block is
+    rounded as MatrixStore stores it, so the diagonal is the one of the
+    rounded problem CG solves."""
     tab = psi.tab
     for g0, g1 in zip(psi.grp[:-1], psi.grp[1:]):
         t = tab[g0:g1]
         nr, nc, c0 = int(t[0, 1]), int(t[0, 2]), int(t[0, 4])
         rows = (t[:, 3, None] + np.arange(nr)).ravel()
         v = np.concatenate([psi.vals[o:o + nr * nc] for o in t[:, 0]]).reshape(-1, nc)
-        diag_hessian[c0:c0 + nc] += 2.0 * np.einsum("ij,ij->j", ovlp[np.ix_(rows, rows)] @ v, v)
+        s = ovlp[np.ix_(rows, rows)]
+        if v.dtype != np.float64:
+            s = (0.5 * (s + s.T)).astype(v.dtype).astype(np.float64)
+            v = v.astype(np.float64)
+        diag_hessian[c0:c0 + nc] += 2.0 * np.einsum("ij,ij->j", s @ v, v)
 
 
 def _aux_size_for_species(spe, lmax, nmax):
@@ -484,17 +492,23 @@ class MatrixStore:
     opened per structure or per CG step, and the mapped pages stay mapped.
     Every matrix holds the same bytes wherever it lives, so the split does not
     change the results.
+
+    dtype (gpr.matrix_dtype) is the type packed overlaps are stored in; Psi
+    arrives in its storage type from PsiBuilder.psi_blocks.
     """
 
     ALIGN = 4096  # pack offsets; every array starts page-aligned
 
-    def __init__(self, mode, saltedpath, rank, nlocal=1, packed=False):
+    def __init__(self, mode, saltedpath, rank, nlocal=1, packed=False, dtype=np.float64):
         mode = str(mode).strip().lower()
         if mode not in ("memory", "mmap"):
             raise ValueError(
                 "gpr.matrix_storage must be 'memory' or 'mmap', "
                 f"got {mode!r}"
             )
+        self.dtype = np.dtype(dtype)
+        if self.dtype != np.float64 and not packed:
+            raise ValueError("gpr.matrix_dtype other than float64 needs gpr.packed_overlap: true")
 
         self.mode = mode
         self.rank = rank
@@ -552,7 +566,7 @@ class MatrixStore:
             ovlp = ovlp[np.ix_(np.asarray(indices, dtype=np.int64), np.asarray(indices, dtype=np.int64))]
         if self.packed:
             p = PackedSym.from_dense(ovlp)
-            p.ap = self._keep(p.ap)
+            p.ap = self._keep(p.ap.astype(self.dtype, copy=False))
             self._overlaps.append(p)
         else:
             self._overlaps.append(self._keep(ovlp))
@@ -638,6 +652,7 @@ def build():
             "gpr.matrix_storage must be either 'memory' or 'mmap', "
             f"got {matrix_storage!r}"
         )
+    matrix_dtype = np.dtype(inp.gpr.matrix_dtype)
 
     comm, size, rank, parallel = detect_mpi()
 
@@ -699,7 +714,7 @@ def build():
             # The slowest rank sets the step time, and a rank's step time and
             # memory follow the bytes of its matrices, not its structure count.
             jobs = train_indices[:ntraintot]
-            cut = split_by_cost([psi_builder.matrix_bytes(i) for i in jobs], size)
+            cut = split_by_cost([psi_builder.matrix_bytes(i, matrix_dtype.itemsize) for i in jobs], size)
             trainrange = jobs[cut[rank]:cut[rank + 1]]
         else:
             trainrange = distribute_jobs(comm, train_indices[:ntraintot])
@@ -929,15 +944,19 @@ def build():
     node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED) if parallel else None
     nlocal = node_comm.Get_size() if parallel else 1
     matrices = MatrixStore(matrix_storage, saltedpath, rank, nlocal,
-                           packed=bool(inp.gpr.packed_overlap))
+                           packed=bool(inp.gpr.packed_overlap), dtype=matrix_dtype)
     coef_list = []
     precond_diag = None
     # SALTED_PSI_BLOCKS=0 restores the scipy COO Psi (same results up to rounding).
     use_blocks = saltedtype == "density" and os.environ.get("SALTED_PSI_BLOCKS", "1") != "0"
+    if matrix_dtype != np.float64 and not use_blocks:
+        raise ValueError("gpr.matrix_dtype other than float64 needs saltedtype 'density' with PsiBlocks "
+                         "(SALTED_PSI_BLOCKS unset or 1)")
 
     if rank == 0:
         print(
-            f"preparing matrices with gpr.matrix_storage={matrix_storage!r}...",
+            f"preparing matrices with gpr.matrix_storage={matrix_storage!r}, "
+            f"gpr.matrix_dtype={matrix_dtype.name!r}...",
             flush=True,
         )
 
@@ -965,7 +984,7 @@ def build():
 
             if use_blocks:
                 kblocks = psi_builder.build_blocks(iconf, frames[iconf])
-                psi = psi_builder.psi_blocks(iconf, *kblocks)
+                psi = psi_builder.psi_blocks(iconf, *kblocks, dtype=matrix_dtype)
             else:
                 psi = psi_builder.build(iconf, frames[iconf])
             full_coefs = np.load(

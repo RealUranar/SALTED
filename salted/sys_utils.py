@@ -1026,6 +1026,12 @@ class ParseConfig:
                     bool,
                     lambda inp, val: isinstance(val, bool),
                 ),  # keep overlaps as the upper triangle of (S+S^T)/2: half the memory, last-bit changes
+                "matrix_dtype": (
+                    False,
+                    "float64",
+                    str,
+                    lambda inp, val: val in ("float64", "float32"),
+                ),  # storage type of the Psi values and packed overlaps in minimize_loss; sums stay float64
                 "sparse_algorithm": (
                     False,
                     "numba",

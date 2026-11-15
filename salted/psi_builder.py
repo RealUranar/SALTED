@@ -251,14 +251,15 @@ class PsiBuilder:
         return sparse.coo_matrix(
             (psi_nonzero.finalize(), ij), shape=(Tsize, self.totsize))
 
-    def psi_blocks(self, iconf, Psi, Tsize):
-        """The same matrix as coo_from_blocks, each (atom, lam) block stored once."""
+    def psi_blocks(self, iconf, Psi, Tsize, dtype=np.float64):
+        """The same matrix as coo_from_blocks, each (atom, lam) block stored once
+        (values rounded to dtype)."""
         natoms = self.natoms[iconf]
         base, off = {}, 0
         for key, arr in Psi.items():
             base[key] = off
             off += arr.size
-        vals = np.concatenate([np.ascontiguousarray(a, dtype=np.float64).ravel() for a in Psi.values()])
+        vals = np.concatenate([np.ascontiguousarray(a, dtype=dtype).ravel() for a in Psi.values()])
         ispe = {spe: 0 for spe in self.species}
         tab = []
         i = 0
