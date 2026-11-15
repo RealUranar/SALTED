@@ -43,7 +43,7 @@ def _onsite_overlap(symbols, rng):
     return S
 
 
-def _case(kind, dtype, seed=0):
+def _case(kind, dtype, seed=0, regul=REGUL):
     rng = np.random.default_rng(seed)
     psis, ovls, dense = [], [], []
     for symbols in STRUCTS:
@@ -60,11 +60,11 @@ def _case(kind, dtype, seed=0):
         dense.append((dense_psi(SimpleNamespace(vals=p.vals.astype(np.float64), tab=p.tab, shape=p.shape)),
                       PackedSym(o.ap.astype(np.float64), o.n).dense()))
     norm = 1.0 / len(STRUCTS)
-    A = norm * sum(2.0 * a.T @ s @ a for a, s in dense) + 2.0 * REGUL * np.eye(TOTSIZE)
+    A = norm * sum(2.0 * a.T @ s @ a for a, s in dense) + 2.0 * regul * np.eye(TOTSIZE)
     return psis, ovls, dense, norm, A
 
 
-def _reference(kind, dense, norm, A):
+def _reference(kind, dense, norm, A, regul=REGUL):
     """Dense block-diagonal M^-1 (onsite: the exact blocks of A; full: E (R x G + 2 regul)^-1 E)."""
     Minv = np.zeros_like(A)
     for c0, nmax, nc in BLOCKS:
@@ -81,8 +81,10 @@ def _reference(kind, dense, norm, A):
             if rows:
                 Rs.append(s[np.ix_(rows, rows)])
         R = sum(Rs) / max(len(Rs), 1)
-        M = np.kron(R, G) + 2.0 * REGUL * np.eye(nmax * nc)
+        M = np.kron(R, G) + 2.0 * regul * np.eye(nmax * nc)
         e = np.sqrt(np.diag(M) / np.diag(A)[sl])
+        if sum(int(a[:, cols].any(axis=1).sum()) for a, _ in dense) < nc:  # singular G: no scaling
+            e[:] = 1.0
         Minv[sl, sl] = e[:, None] * np.linalg.inv(M) * e[None, :]
     return Minv
 
@@ -105,6 +107,26 @@ def test_matches_dense(kind, dtype, tiny):
     got = M(x)
     assert np.abs(got - ref).max() <= 1e-10 * np.abs(ref).max()
     assert np.array_equal(M(x), got)  # deterministic
+
+
+def test_singular_gram_beats_jacobi():
+    """O lam 0 has fewer kernel rows (5) than columns (9), so its G is singular;
+    with a small regul the preconditioned system must still beat Jacobi."""
+    comm = _comm()
+    rank, size = (0, 1) if comm is None else (comm.Get_rank(), comm.Get_size())
+    regul = 1e-8
+    psis, ovls, _, norm, A = _case("full", np.float64, regul=regul)
+    mine = [k for k in range(len(psis)) if k % size == rank]
+    store = SimpleNamespace(npsi=len(mine), get_psi=lambda k: psis[mine[k]], get_overlap=lambda k: ovls[mine[k]])
+    M = kron_precond(store, TOTSIZE, BLOCKS, norm, regul, np.diag(A).copy(), comm)
+    Minv = np.column_stack([M(x) for x in np.eye(TOTSIZE)])
+    L = np.linalg.cholesky(A)
+
+    def cond(P):
+        ev = np.linalg.eigvalsh(L.T @ (0.5 * (P + P.T)) @ L)
+        return ev[-1] / ev[0]
+
+    assert cond(Minv) < cond(np.diag(1.0 / np.diag(A)))
 
 
 def test_assign_units_spreads_largest():

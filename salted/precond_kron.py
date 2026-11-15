@@ -15,7 +15,7 @@ exact block when S keeps only its same-centre part.  With R = Q diag(l) Q^T
 so a block needs one Cholesky factor of size nc per eigenvalue of R.  Each
 factor (block, i) is a unit owned by one rank; every rank applies its units
 and one Allreduce sums M^-1 r.  M is scaled symmetrically, E M E, so that its
-diagonal equals the Jacobi diagonal.
+diagonal equals the Jacobi diagonal, unless G has fewer rows than columns.
 """
 import contextlib
 import ctypes
@@ -132,12 +132,22 @@ def kron_precond(matrices, totsize, blocks, norm, regul, diag, comm=None, order=
     ovls = [matrices.get_overlap(k) for k in range(matrices.npsi)]
     gidx = [{int(p.tab[g0, 4]): (g0, g1) for g0, g1 in zip(p.grp[:-1], p.grp[1:])} for p in psis]
 
-    def kernel(k, c0):
-        p = psis[k]
+    def nrows(k, c0):
         g0, g1 = gidx[k][c0]
-        t = p.tab[g0:g1]
-        nr, nc = int(t[0, 1]), int(t[0, 2])
-        return np.concatenate([p.vals[o:o + nr * nc] for o in t[:, 0]]).reshape(-1, nc).astype(np.float64, copy=False)
+        return (g1 - g0) * int(psis[k].tab[g0, 1])
+
+    def stacked(ch, c0, nc):
+        """The kernel blocks of structures ch, stacked, in float64."""
+        V = np.empty((sum(nrows(k, c0) for k in ch), nc))
+        i = 0
+        for k in ch:
+            p = psis[k]
+            g0, g1 = gidx[k][c0]
+            nr = int(p.tab[g0, 1])
+            for o in p.tab[g0:g1, 0]:
+                V[i:i + nr] = p.vals[o:o + nr * nc].reshape(nr, nc)
+                i += nr
+        return V
 
     units, t_sum, t_fac = [], 0.0, 0.0
     for b, (c0, nmax, nc) in enumerate(blocks):
@@ -152,16 +162,16 @@ def kron_precond(matrices, totsize, blocks, norm, regul, diag, comm=None, order=
         for k in mine:
             r0 = np.array([psis[k].tab[gidx[k][c][0], 3] for c in cs])
             R += _packed_sub(ovls[k], r0)
-        nR = len(mine)
+        cnt = np.array([len(mine), sum(nrows(k, c0) for k in mine)], dtype=np.int64)  # structures, rows of G
         if comm is not None:
             comm.Allreduce(MPI.IN_PLACE, R, op=MPI.SUM)
-            nR = comm.allreduce(nR)
-        R /= max(nR, 1)
+            comm.Allreduce(MPI.IN_PLACE, cnt, op=MPI.SUM)
+        R /= max(int(cnt[0]), 1)
 
         # G in column panels, each summed over local chunks of stacked V, then reduced to every owner
         chunks, cur, cb = [], [], 0
         for k in mine:
-            nb = 8 * (gidx[k][c0][1] - gidx[k][c0][0]) * int(psis[k].tab[gidx[k][c0][0], 1]) * nc
+            nb = 8 * nrows(k, c0) * nc
             if cur and cb + nb > chunk_bytes:
                 chunks.append(cur)
                 cur, cb = [], 0
@@ -175,7 +185,7 @@ def kron_precond(matrices, totsize, blocks, norm, regul, diag, comm=None, order=
             a1 = min(nc, a0 + w)
             loc = np.zeros((nc, a1 - a0))
             for ch in chunks:
-                Vs = np.concatenate([kernel(k, c0) for k in ch])
+                Vs = stacked(ch, c0, nc)
                 loc += Vs.T @ Vs[:, a0:a1]
                 del Vs
             if comm is None:
@@ -197,6 +207,10 @@ def kron_precond(matrices, totsize, blocks, norm, regul, diag, comm=None, order=
         dk = (np.diag(R)[:, None] * np.diag(G)[None, :]).ravel() + shift
         dt = diag[c0:c0 + nmax * nc]
         e = np.sqrt(np.where(dt > 0.0, dk / np.where(dt > 0.0, dt, 1.0), 1.0))
+        if cnt[1] < nc:
+            # G is singular, and A = M = 2 regul on its null space; scaling would tilt
+            # those directions into range(G) and blow up M^-1 A
+            e[:] = 1.0
         for j, i in enumerate(mine_units):
             Mi = G if j == len(mine_units) - 1 else G.copy()  # the last unit reuses G's memory
             Mi *= max(lr[i], 0.0)
