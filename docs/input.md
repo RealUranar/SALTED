@@ -19,7 +19,7 @@ For all the path-related variables, the path can be either a relative path or an
 | `saltedname` | `str` | **Required** | A label to identify a particular SALTED setup. |
 | `saltedpath` | `str` | **Required** | Location of all files produced by SALTED. Either relative to the working directory or an absolute path. |
 | `saltedtype` | `str` | `density` | Option for selecting the type of SALTED target (`density` or `density-response`) |
-| `seed` | `int` | `42` | Random seed. Only implemented in parsing input; not implemented in the code. |
+| `seed` | `int` (≥ 0) | `42` | Random seed. Used only by `gpr.sparse_selection: totalnov` (its subsample draws). |
 | `verbose` | `bool` | `False` | Output verbosity. |
 
 ### System difinition `inp.system`
@@ -84,6 +84,10 @@ Remember to set `inp.predict` if one wants to predict densities.
 | -:| :-: | :-: | :- |
 | `z` | `float` | `2.0` | Kernel exponent $\zeta$. |
 | `Menv` | `int` | **Required** | Number of reference environments. |
+| `sparse_selection` | `Literal["fps"] \| Literal["maxnov"] \| Literal["totalnov"]` | `"fps"` | Rule that picks the `Menv` reference environments in `sparse_selection`, on the $\lambda=0$ rows of `FEAT-0.h5`. `"fps"`: farthest point sampling (squared Euclidean distance). `"maxnov"` and `"totalnov"` use the prediction kernel $k(a,b)=(\mathbf{x}_a\cdot\mathbf{x}_b)^\zeta$ within each species and the novelty $1 - k_{aR}K_{RR}^{-1}k_{Ra}/k(a,a)$ of an atom w.r.t. the references $R$ of its species (incremental Cholesky, see `salted/novelty_selection.py`). `"maxnov"` adds the most novel atom; `"totalnov"` adds the atom that removes the most novelty summed over the atoms of its species. |
+| `sparse_budget` | `Literal["shared"] \| Literal["per_species"]` | `"shared"` | `"shared"`: one budget of `Menv` over all species; with `fps` this is one FPS over all atoms pooled, with a novelty rule each step goes to the species with the best candidate, so a species can end with very few references (a warning is printed below 2). `"per_species"`: each species gets the count that pooled FPS gives it, and the rule picks that many within the species. `fps` + `shared` is the original selection. |
+| `sparse_ncand` | `int` | `256` | `totalnov` only: candidates drawn per species and step (without replacement, from the not yet picked atoms); `0` uses all atoms (exact greedy). With both `sparse_ncand` and `sparse_neval` at `0` each pick costs O(N_s² · (nfeat + m)) for a species of N_s atoms, which is impractical beyond some 10⁴ atoms per species (a warning is printed above 20000). |
+| `sparse_neval` | `int` | `4096` | `totalnov` only: atoms drawn per species and step over which the novelty removed from the other atoms is summed (rescaled to the species size; the candidate's own novelty is added exactly); `0` uses all atoms. The draws use `salted.seed`. With subsamples the shared budget still leans slightly towards species with more atoms. |
 | `Ntrain` | `int` | **Required** | Number of training structures. |
 | `trainfrac` | `float` | `1.0` | Training dataset fraction. Training dataset size is `Ntrain * trainfrac`. |
 | `regul` | `float` | `1e-6` | Regularization parameter $\eta$. |

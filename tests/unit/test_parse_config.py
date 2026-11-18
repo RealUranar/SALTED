@@ -159,3 +159,39 @@ def test_gpr_preconditioner(tmp_path, monkeypatch, value, ok):
     else:
         with pytest.raises(Exception):
             ParseConfig().parse_input()
+
+
+@pytest.mark.parametrize(
+    "key, value, ok, default",
+    [
+        ("sparse_selection", None, True, "fps"),
+        ("sparse_selection", "totalnov", True, "fps"),
+        ("sparse_selection", "novelty", False, "fps"),
+        ("sparse_budget", None, True, "shared"),
+        ("sparse_budget", "per_species", True, "shared"),
+        ("sparse_budget", "species", False, "shared"),
+        ("sparse_ncand", None, True, 256),
+        ("sparse_ncand", 0, True, 256),
+        ("sparse_ncand", -1, False, 256),
+        ("sparse_neval", None, True, 4096),
+        ("sparse_neval", 100, True, 4096),
+        ("sparse_neval", 1.5, False, 4096),
+        ("sparse_neval", True, False, 4096),
+        ("salted.seed", None, True, 42),
+        ("salted.seed", 0, True, 42),
+        ("salted.seed", -1, False, 42),
+    ],
+)
+def test_gpr_sparse_selection_keys(tmp_path, monkeypatch, key, value, ok, default):
+    """None: the key is left out and takes its default"""
+    section, key = key.split(".") if "." in key else ("gpr", key)
+    data = yaml.safe_load(yaml.safe_dump(MINIMAL_INP))
+    if value is not None:
+        data[section][key] = value
+    write_inp(tmp_path, data)
+    monkeypatch.chdir(tmp_path)
+    if ok:
+        assert getattr(getattr(ParseConfig().parse_input(), section), key) == (default if value is None else value)
+    else:
+        with pytest.raises(Exception):
+            ParseConfig().parse_input()

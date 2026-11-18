@@ -819,7 +819,7 @@ class ParseConfig:
                     lambda inp, val: val in ("density", "density-response"),
                 ),  # salted target
                 "verbose": (False, False, bool, None),  # whether print verbose info
-                "seed": (False, 42, int, None),  # random seed
+                "seed": (False, 42, int, lambda inp, val: not isinstance(val, bool) and val >= 0),  # random seed
             },
             "system": {
                 "filename": (
@@ -962,6 +962,30 @@ class ParseConfig:
                     int,
                     lambda inp, val: val > 0,
                 ),  # number of sparsified atomic environments
+                "sparse_selection": (
+                    False,
+                    "fps",
+                    str,
+                    lambda inp, val: val in ("fps", "maxnov", "totalnov"),
+                ),  # rule that picks the Menv reference environments
+                "sparse_budget": (
+                    False,
+                    "shared",
+                    str,
+                    lambda inp, val: val in ("shared", "per_species"),
+                ),  # one pooled budget, or per-species counts taken from pooled FPS
+                "sparse_ncand": (
+                    False,
+                    256,
+                    int,
+                    lambda inp, val: not isinstance(val, bool) and val >= 0,
+                ),  # totalnov candidate subsample per species and step, 0 = all
+                "sparse_neval": (
+                    False,
+                    4096,
+                    int,
+                    lambda inp, val: not isinstance(val, bool) and val >= 0,
+                ),  # totalnov evaluation subsample per species and step, 0 = all
                 "Ntrain": (
                     True,
                     None,
