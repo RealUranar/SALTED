@@ -65,6 +65,7 @@ def build():
             power_dense, dense_species, M, rule=g.sparse_selection, budget=g.sparse_budget,
             zeta=g.z, ncand=g.sparse_ncand, neval=g.sparse_neval, seed=inp.salted.seed,
             nspecies=len(species), verbose=inp.salted.verbose,
+            hybrid_fraction=float(g.sparse_hybrid_fraction),
         )
     fps_species = dense_species[fps_idx]
     sparse_set = np.vstack((fps_idx, fps_species)).T

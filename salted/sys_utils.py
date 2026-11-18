@@ -966,7 +966,7 @@ class ParseConfig:
                     False,
                     "fps",
                     str,
-                    lambda inp, val: val in ("fps", "maxnov", "totalnov"),
+                    lambda inp, val: val in ("fps", "maxnov", "totalnov", "hybrid"),
                 ),  # rule that picks the Menv reference environments
                 "sparse_budget": (
                     False,
@@ -986,6 +986,12 @@ class ParseConfig:
                     int,
                     lambda inp, val: not isinstance(val, bool) and val >= 0,
                 ),  # totalnov evaluation subsample per species and step, 0 = all
+                "sparse_hybrid_fraction": (
+                    False,
+                    0.8,
+                    (int, float),
+                    lambda inp, val: not isinstance(val, bool) and 0 <= val <= 1,
+                ),  # hybrid: share of Menv picked by totalnov before the maxnov tail
                 "Ntrain": (
                     True,
                     None,

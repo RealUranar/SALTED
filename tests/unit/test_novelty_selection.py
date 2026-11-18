@@ -241,3 +241,60 @@ def test_build_novelty_file(tmp_path, monkeypatch):
     out = np.loadtxt(tmp_path / "equirepr_t" / "sparse_set_9.txt", dtype=int)
     assert out.shape == (9, 2) and len(np.unique(out[:, 0])) == 9
     assert (spe[out[:, 0]] == out[:, 1]).all()
+
+
+@pytest.mark.parametrize("budget", ["shared", "per_species"])
+@pytest.mark.parametrize("ncand, neval", [(0, 0), (8, 40)])
+def test_hybrid_ends_are_totalnov_and_maxnov(budget, ncand, neval):
+    X, species = _species_data()
+    kw = dict(budget=budget, ncand=ncand, neval=neval, seed=5)
+    hyb1 = select_sparse(X, species, 30, rule="hybrid", hybrid_fraction=1.0, **kw)
+    assert hyb1.tolist() == select_sparse(X, species, 30, rule="totalnov", **kw).tolist()
+    hyb0 = select_sparse(X, species, 30, rule="hybrid", hybrid_fraction=0.0, **kw)
+    assert hyb0.tolist() == select_sparse(X, species, 30, rule="maxnov", **kw).tolist()
+
+
+def test_hybrid_shared_is_totalnov_prefix_then_maxnov_tail():
+    X, species = _species_data()
+    M, f = 30, 0.6
+    n1 = 18
+    got = select_sparse(X, species, M, rule="hybrid", hybrid_fraction=f, ncand=0, neval=0)
+    head = select_sparse(X, species, n1, rule="totalnov", ncand=0, neval=0)
+    assert got[:n1].tolist() == head.tolist()
+    R = [[] for _ in range(3)]
+    for p in head:
+        R[species[p]].append(p)
+    for p in got[n1:]:
+        best, arg = -np.inf, None
+        for s in range(3):
+            m = np.flatnonzero(species == s)
+            nov = _brute_novelty(X[m], [int(np.searchsorted(m, r)) for r in R[s]])
+            nov[[int(np.searchsorted(m, r)) for r in R[s]]] = -np.inf
+            i = int(np.argmax(nov))
+            if nov[i] > best:
+                best, arg = nov[i], m[i]
+        assert p == arg
+        R[species[p]].append(p)
+
+
+def test_hybrid_per_species_splits_each_count():
+    X, species = _species_data()
+    M, f = 30, 0.5
+    counts = np.bincount(species[do_fps(X, M)], minlength=3)
+    got = select_sparse(X, species, M, rule="hybrid", budget="per_species", hybrid_fraction=f, ncand=0, neval=0)
+    assert np.bincount(species[got], minlength=3).tolist() == counts.tolist()
+    pos = 0
+    for s in range(3):
+        mine = got[pos:pos + counts[s]]
+        n1 = int(np.floor(f * counts[s] + 0.5))
+        m = np.flatnonzero(species == s)
+        alone = select_sparse(X[m], np.zeros(len(m), int), n1, rule="totalnov", ncand=0, neval=0) if n1 else []
+        assert [int(np.searchsorted(m, p)) for p in mine[:n1]] == list(alone)
+        pos += counts[s]
+
+
+def test_hybrid_fraction_must_be_in_unit_interval():
+    X, species = _species_data()
+    for f in (-0.1, 1.5, True):
+        with pytest.raises(ValueError):
+            select_sparse(X, species, 10, rule="hybrid", hybrid_fraction=f)

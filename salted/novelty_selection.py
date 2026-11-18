@@ -19,6 +19,9 @@ Rules (per species):
              different size are comparable in the shared budget. Exact greedy when
              ncand = neval = 0. Subsamples are fresh draws, without replacement, from one
              numpy Generator seeded by inp.salted.seed, made each time a species is evaluated.
+    hybrid   the first round(f M) references by totalnov, the rest by maxnov on the same
+             Cholesky factors (f = sparse_hybrid_fraction, rounded half up; per species
+             with per_species). f = 1 is totalnov, f = 0 is maxnov.
 
 Budgets:
     shared       one budget M over all species; each step picks the species whose best
@@ -41,7 +44,7 @@ import numpy as np
 
 from salted.sys_utils import do_fps
 
-RULES = ("fps", "maxnov", "totalnov")
+RULES = ("fps", "maxnov", "totalnov", "hybrid")
 BUDGETS = ("shared", "per_species")
 RTOL = 1e-12  # relative residual below which an atom adds no new direction
 _BLOCK = 32 << 20  # float64 entries per kernel block in the totalnov gain
@@ -161,7 +164,21 @@ def residual_novelty(X_s, ref_idx, zeta, eval_idx=None):
     return nov if eval_idx is None else nov[inv[len(ref_idx):]]
 
 
-def _check(rule, budget, ncand, neval, seed):
+def _n_first(f, n):
+    """hybrid: picks made by totalnov out of n (f n rounded half up)"""
+    return int(np.floor(f * n + 0.5))
+
+
+def _phase(rule, k, n_first):
+    """rule used for pick k (0-based)"""
+    if rule != "hybrid":
+        return rule
+    return "totalnov" if k < n_first else "maxnov"
+
+
+def _check(rule, budget, ncand, neval, seed, f=0.8):
+    if not isinstance(f, (int, float, np.floating)) or isinstance(f, bool) or not 0 <= f <= 1:
+        raise ValueError(f"sparse_hybrid_fraction must be in [0, 1], got {f!r}")
     if rule not in RULES:
         raise ValueError(f"sparse_selection must be one of {RULES}, got {rule!r}")
     if budget not in BUDGETS:
@@ -172,14 +189,14 @@ def _check(rule, budget, ncand, neval, seed):
 
 
 def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
-                  ncand=256, neval=4096, seed=42, nspecies=None, verbose=False):
+                  ncand=256, neval=4096, seed=42, nspecies=None, verbose=False, hybrid_fraction=0.8):
     """Indices (rows of X, in pick order) of the M reference environments.
 
     X: (N, nfeat) lambda = 0 descriptor rows of the dense training atoms.
     species: (N,) int species index of each row.
     fps + shared is today's pooled do_fps(X, M) unchanged (no uniqueness guarantee).
     """
-    _check(rule, budget, ncand, neval, seed)
+    _check(rule, budget, ncand, neval, seed, hybrid_fraction)
     species = np.asarray(species, int)
     if M > len(X):
         raise ValueError(f"Menv ({M}) cannot exceed the {len(X)} atomic environments.")
@@ -189,7 +206,8 @@ def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
     nspecies = int(species.max()) + 1 if nspecies is None else nspecies
     members = [np.flatnonzero(species == s) for s in range(nspecies)]
     print(f"Sparse selection: rule={rule} budget={budget} Menv={M} zeta={zeta} "
-          f"ncand={ncand} neval={neval} seed={seed}")
+          f"ncand={ncand} neval={neval} seed={seed}"
+          + (f" hybrid_fraction={hybrid_fraction}" if rule == "hybrid" else ""))
 
     counts = None
     if budget == "per_species":
@@ -210,7 +228,7 @@ def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
             return np.concatenate(picks)
 
     nmax = max(len(m) for m in members)
-    if rule == "totalnov" and ncand == 0 and neval == 0 and nmax > 20000:
+    if rule in ("totalnov", "hybrid") and ncand == 0 and neval == 0 and nmax > 20000:
         print(f"WARNING: exact totalnov (ncand = neval = 0) costs O(N_s^2 (nfeat + m)) per pick; "
               f"largest species has {nmax} atoms")
     rng = np.random.default_rng(seed)
@@ -227,8 +245,9 @@ def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
     nfallback = np.zeros(nspecies, int)
     if counts is not None:
         for s, ch in enumerate(chols):
-            for _ in range(counts[s]):
-                score, p = ch.best(rule, rng, ncand, neval)
+            n1 = _n_first(hybrid_fraction, counts[s])
+            for k in range(counts[s]):
+                score, p = ch.best(_phase(rule, k, n1), rng, ncand, neval)
                 if p < 0:
                     score, p = ch.fallback()
                     nfallback[s] += 1
@@ -237,8 +256,12 @@ def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
                 if verbose:
                     print(f"species {s} pick {len(picks)} of {M} score = {score}")
     else:
-        best = [ch.best(rule, rng, ncand, neval) for ch in chols]
+        n1 = _n_first(hybrid_fraction, M)
+        best = [ch.best(_phase(rule, 0, n1), rng, ncand, neval) for ch in chols]
         for step in range(M):
+            if rule == "hybrid" and step == n1 and step > 0:
+                # cached totalnov gains are not maxnov scores
+                best = [ch.best("maxnov", rng, ncand, neval) for ch in chols]
             s = int(np.argmax([b[0] for b in best]))
             score, p = best[s]
             if p < 0:
@@ -248,7 +271,7 @@ def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
                 nfallback[s] += 1
             chols[s].add(p)
             picks.append(members[s][p])
-            best[s] = chols[s].best(rule, rng, ncand, neval)
+            best[s] = chols[s].best(_phase(rule, step + 1, n1), rng, ncand, neval)
             if verbose:
                 print(f"Doing {step + 1} of {M}: species {s} score = {score}")
 
