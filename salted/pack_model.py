@@ -60,6 +60,9 @@ def write_data_head(SALTED_file, data):
 
 def write_chunk_location(SALTED_file, chunk_name, location):
     global OFFSET_TABLE_OF_CONTENTS
+    if location > 2**31 - 1:
+        raise ValueError(f"Block {chunk_name} starts at byte {location}, beyond the int32 offsets of the table of "
+                         "contents (2 GiB) that read_model and NoSpherA2 read")
     end_of_block = SALTED_file.tell()
     SALTED_file.seek(OFFSET_TABLE_OF_CONTENTS)
     write_key5(SALTED_file, chunk_name.encode("utf-8"))
@@ -423,10 +426,11 @@ def build(debug: bool = False):
         pack_averages(f, path, debug)
         pack_wigners(f, path, inp, debug)
         pack_fps(f, path, inp, debug)
-        pack_folded(f, path, inp, debug)
-
+        # Small blocks first: only a block's start needs an int32 offset, so the model blocks, which grow with
+        # ncut and Menv, go last (the readers seek every block by its offset, the order is free)
         if HAS_PYSCF:
             pack_basis(f, inp, debug)
+        pack_folded(f, path, inp, debug)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

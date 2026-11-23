@@ -5,6 +5,7 @@ import struct
 
 import h5py
 import numpy as np
+import pytest
 import yaml
 
 from salted import basis, pack_model, read_model
@@ -74,3 +75,29 @@ def test_norm_block(tmp_path, monkeypatch):
     for key, value in models["unit"].items():
         if key not in ("version", "normalisation"):
             np.testing.assert_equal(models["rel_power"][key], value)
+
+
+def test_model_blocks_written_last(tmp_path, monkeypatch):
+    """Only block starts need int32 offsets, so the blocks that grow with ncut and Menv come after BASIS."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pack_model, "HAS_PYSCF", True)
+
+    def stub_basis(f, inp, debug=False):
+        begin = f.tell()
+        f.write(struct.pack("<ii", 3, 0))
+        pack_model.write_chunk_location(f, "BASIS", begin)
+
+    monkeypatch.setattr(pack_model, "pack_basis", stub_basis)
+    fake_model(tmp_path)
+    pack_model.build()
+    with open(tmp_path / "test.salted", "rb") as f:
+        _, blocks = read_model.read_header(f)
+    assert max(blocks[b] for b in blocks if b not in ("FEATL", "PROJW", "GENV")) == blocks["BASIS"]
+    assert blocks["BASIS"] < min(blocks["FEATL"], blocks["PROJW"], blocks["GENV"])
+
+
+def test_offset_beyond_int32_raises():
+    import io
+
+    with pytest.raises(ValueError, match="GENV starts at byte 2147483648"):
+        pack_model.write_chunk_location(io.BytesIO(), "GENV", 2**31)
