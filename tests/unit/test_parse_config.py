@@ -60,7 +60,7 @@ def test_defaults_are_applied(tmp_path, monkeypatch):
     inp = ParseConfig().parse_input()
     assert inp.gpr.regul == pytest.approx(1e-6)
     assert inp.gpr.trainfrac == pytest.approx(1.0)
-    assert inp.gpr.trainsel in ("random", "sequential")
+    assert inp.gpr.trainsel == "equal_rmsd_fps"
     assert inp.descriptor.sparsify.ncut == 0
 
 
@@ -164,25 +164,17 @@ def test_gpr_preconditioner(tmp_path, monkeypatch, value, ok):
 @pytest.mark.parametrize(
     "key, value, ok, default",
     [
-        ("sparse_selection", None, True, "fps"),
-        ("sparse_selection", "totalnov", True, "fps"),
-        ("sparse_selection", "novelty", False, "fps"),
-        ("sparse_selection", "hybrid", True, "fps"),
-        ("sparse_budget", None, True, "shared"),
-        ("sparse_budget", "per_species", True, "shared"),
-        ("sparse_budget", "species", False, "shared"),
-        ("sparse_ncand", None, True, 256),
-        ("sparse_ncand", 0, True, 256),
-        ("sparse_ncand", -1, False, 256),
-        ("sparse_neval", None, True, 4096),
-        ("sparse_neval", 100, True, 4096),
-        ("sparse_neval", 1.5, False, 4096),
-        ("sparse_neval", True, False, 4096),
-        ("sparse_hybrid_fraction", None, True, 0.8),
-        ("sparse_hybrid_fraction", 0.6, True, 0.8),
-        ("sparse_hybrid_fraction", 1, True, 0.8),
-        ("sparse_hybrid_fraction", 1.5, False, 0.8),
-        ("sparse_hybrid_fraction", True, False, 0.8),
+        ("sparse_selection", None, True, "hybrid"),
+        ("sparse_selection", "fps", True, "hybrid"),
+        ("sparse_selection", "totalnov", False, "hybrid"),
+        ("sparse_budget", "shared", False, None),
+        ("sparse_ncand", 256, False, None),
+        ("sparse_neval", 4096, False, None),
+        ("sparse_hybrid_fraction", None, True, 0.6),
+        ("sparse_hybrid_fraction", 0.8, True, 0.6),
+        ("sparse_hybrid_fraction", 1, True, 0.6),
+        ("sparse_hybrid_fraction", 1.5, False, 0.6),
+        ("sparse_hybrid_fraction", True, False, 0.6),
         ("salted.seed", None, True, 42),
         ("salted.seed", 0, True, 42),
         ("salted.seed", -1, False, 42),

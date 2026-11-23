@@ -39,7 +39,7 @@ def test_cholesky_novelty_equals_rkhs_projector_route():
 
 def test_maxnov_equals_brute_force_greedy():
     X = _data(60, 8)
-    got = select_sparse(X, np.zeros(60, int), 12, rule="maxnov")
+    got = select_sparse(X, np.zeros(60, int), 12, hybrid_fraction=0.0)
     R = []
     for _ in range(12):
         nov = _brute_novelty(X, R)
@@ -50,7 +50,7 @@ def test_maxnov_equals_brute_force_greedy():
 
 def test_totalnov_exact_equals_brute_force_greedy():
     X = _data(50, 6)
-    got = select_sparse(X, np.zeros(50, int), 10, rule="totalnov", ncand=0, neval=0)
+    got = select_sparse(X, np.zeros(50, int), 10, hybrid_fraction=1.0, ncand=0, neval=0)
     R = []
     for _ in range(10):
         before = _brute_novelty(X, R).sum()
@@ -68,12 +68,12 @@ def _species_data():
     return X, species
 
 
-@pytest.mark.parametrize("rule", ["maxnov", "totalnov"])
-def test_shared_budget_counts_and_species(rule, capsys):
+@pytest.mark.parametrize("f", [0.0, 0.6, 1.0])
+def test_shared_budget_counts_and_species(f, capsys):
     X, species = _species_data()
-    idx = select_sparse(X, species, 37, rule=rule, budget="shared", seed=7)
+    idx = select_sparse(X, species, 37, hybrid_fraction=f, seed=7)
     assert len(idx) == 37 and len(np.unique(idx)) == 37
-    again = select_sparse(X, species, 37, rule=rule, budget="shared", seed=7)
+    again = select_sparse(X, species, 37, hybrid_fraction=f, seed=7)
     assert idx.tolist() == again.tolist()
     assert "seed=7" in capsys.readouterr().out
 
@@ -81,7 +81,7 @@ def test_shared_budget_counts_and_species(rule, capsys):
 def test_shared_maxnov_equals_global_brute_force():
     """The lazy per-species cache must give the global argmax of within-species novelty."""
     X, species = _species_data()
-    got = select_sparse(X, species, 25, rule="maxnov")
+    got = select_sparse(X, species, 25, hybrid_fraction=0.0)
     R = []
     for _ in range(25):
         nov = np.empty(len(X))
@@ -96,7 +96,7 @@ def test_shared_maxnov_equals_global_brute_force():
 def test_shared_totalnov_exact_equals_global_brute_force():
     X, species = _species_data()
     X, species = X[::4], species[::4]
-    got = select_sparse(X, species, 12, rule="totalnov", ncand=0, neval=0)
+    got = select_sparse(X, species, 12, hybrid_fraction=1.0, ncand=0, neval=0)
     members = [np.flatnonzero(species == s) for s in range(3)]
 
     def total(R):
@@ -126,53 +126,24 @@ def test_totalnov_subsampled_gain_is_unbiased():
     np.testing.assert_allclose(np.mean(draws, axis=0), exact, rtol=0.03)
 
 
-@pytest.mark.parametrize("rule", ["fps", "maxnov", "totalnov"])
-def test_per_species_reproduces_pooled_fps_counts(rule):
-    X, species = _species_data()
-    M = 30
-    counts = np.bincount(species[do_fps(X, M)], minlength=3)
-    idx = select_sparse(X, species, M, rule=rule, budget="per_species")
-    assert len(idx) == M and len(np.unique(idx)) == M
-    assert np.bincount(species[idx], minlength=3).tolist() == counts.tolist()
-
-
-def test_fps_shared_is_do_fps():
-    X, species = _species_data()
-    assert select_sparse(X, species, 30).tolist() == np.array(do_fps(X, 30), int).tolist()
-
-
 def test_invalid_rows_excluded_and_duplicates_fall_back(capsys):
     X = _data(40, 6)
     X[3] = 0.0
     X[4, 2] = np.nan
     X[10:20] = X[10]  # duplicates: novelty runs out
-    idx = select_sparse(X[10:20], np.zeros(10, int), 4, rule="maxnov", budget="per_species")
+    idx = select_sparse(X[10:20], np.zeros(10, int), 4, hybrid_fraction=0.0)
     assert len(np.unique(idx)) == 4
     assert "WARNING" in capsys.readouterr().out
-    idx = select_sparse(X, np.zeros(40, int), 20, rule="maxnov")
+    idx = select_sparse(X, np.zeros(40, int), 20, hybrid_fraction=0.0)
     assert 3 not in idx and 4 not in idx
     assert "2 of 40 atoms excluded" in capsys.readouterr().out
 
 
 def test_bad_arguments_raise():
     X, species = _species_data()
-    for kw in ({"rule": "nov"}, {"budget": "pooled"}, {"ncand": -1}, {"neval": 1.5}, {"seed": -1}):
+    for kw in ({"ncand": -1}, {"neval": 1.5}, {"seed": -1}, {"hybrid_fraction": 2}):
         with pytest.raises(ValueError):
             select_sparse(X, species, 10, **kw)
-
-
-@pytest.mark.parametrize("rule", ["fps", "maxnov", "totalnov"])
-def test_per_species_raises_instead_of_repeating(rule):
-    """Pooled FPS that repeats indices must not turn into repeated rows in the per-species file."""
-    a, b = [1.0, 0.0], [0.0, 1.0]
-    with pytest.raises(ValueError, match="species 1"):  # pooled FPS [0, 1, 0, 0, 0, 0]: species 1 (one atom) gets 5
-        select_sparse(np.array([b] + [a] * 5), np.array([1] + [0] * 5), 6, rule=rule, budget="per_species")
-    X, species = np.array([a, a, b]), np.array([0, 0, 1])  # pooled FPS [0, 2, 0]: counts [2, 1]
-    if rule == "fps":
-        with pytest.raises(ValueError, match="species 0"):
-            select_sparse(X, species, 3, rule=rule, budget="per_species")
-    else:
-        assert sorted(select_sparse(X, species, 3, rule=rule, budget="per_species").tolist()) == [0, 1, 2]
 
 
 def test_float32_rows_give_float64_novelty():
@@ -220,11 +191,11 @@ def _run_dir(tmp_path, gpr_extra):
     return feat.reshape(-1, nfeat), np.tile([1, 0, 0], ntrain)  # species index in ["H", "O"]
 
 
-def test_build_default_file_is_byte_identical(tmp_path, monkeypatch):
-    """Default keys must write what the original code wrote: do_fps on the dense rows, %i savetxt."""
+def test_build_fps_file_is_byte_identical(tmp_path, monkeypatch):
+    """sparse_selection: fps must write what the original code wrote: do_fps on the dense rows, %i savetxt."""
     from salted import sparse_selection
 
-    dense, spe = _run_dir(tmp_path, {})
+    dense, spe = _run_dir(tmp_path, {"sparse_selection": "fps"})
     monkeypatch.chdir(tmp_path)
     sparse_selection.build()
     fps_idx = np.array(do_fps(dense, 9), int)
@@ -232,34 +203,25 @@ def test_build_default_file_is_byte_identical(tmp_path, monkeypatch):
     assert (tmp_path / "equirepr_t" / "sparse_set_9.txt").read_bytes() == (tmp_path / "expected.txt").read_bytes()
 
 
-def test_build_novelty_file(tmp_path, monkeypatch):
+def test_build_default_is_hybrid(tmp_path, monkeypatch):
+    """Without sparse keys the file holds select_sparse's hybrid picks (f 0.6, seed 42) and their species."""
     from salted import sparse_selection
 
-    dense, spe = _run_dir(tmp_path, {"sparse_selection": "totalnov", "sparse_ncand": 4, "sparse_neval": 0})
+    dense, spe = _run_dir(tmp_path, {})
     monkeypatch.chdir(tmp_path)
     sparse_selection.build()
     out = np.loadtxt(tmp_path / "equirepr_t" / "sparse_set_9.txt", dtype=int)
     assert out.shape == (9, 2) and len(np.unique(out[:, 0])) == 9
     assert (spe[out[:, 0]] == out[:, 1]).all()
-
-
-@pytest.mark.parametrize("budget", ["shared", "per_species"])
-@pytest.mark.parametrize("ncand, neval", [(0, 0), (8, 40)])
-def test_hybrid_ends_are_totalnov_and_maxnov(budget, ncand, neval):
-    X, species = _species_data()
-    kw = dict(budget=budget, ncand=ncand, neval=neval, seed=5)
-    hyb1 = select_sparse(X, species, 30, rule="hybrid", hybrid_fraction=1.0, **kw)
-    assert hyb1.tolist() == select_sparse(X, species, 30, rule="totalnov", **kw).tolist()
-    hyb0 = select_sparse(X, species, 30, rule="hybrid", hybrid_fraction=0.0, **kw)
-    assert hyb0.tolist() == select_sparse(X, species, 30, rule="maxnov", **kw).tolist()
+    assert out[:, 0].tolist() == select_sparse(dense, spe, 9, nspecies=2).tolist()
 
 
 def test_hybrid_shared_is_totalnov_prefix_then_maxnov_tail():
     X, species = _species_data()
     M, f = 30, 0.6
     n1 = 18
-    got = select_sparse(X, species, M, rule="hybrid", hybrid_fraction=f, ncand=0, neval=0)
-    head = select_sparse(X, species, n1, rule="totalnov", ncand=0, neval=0)
+    got = select_sparse(X, species, M, hybrid_fraction=f, ncand=0, neval=0)
+    head = select_sparse(X, species, n1, hybrid_fraction=1.0, ncand=0, neval=0)
     assert got[:n1].tolist() == head.tolist()
     R = [[] for _ in range(3)]
     for p in head:
@@ -277,24 +239,8 @@ def test_hybrid_shared_is_totalnov_prefix_then_maxnov_tail():
         R[species[p]].append(p)
 
 
-def test_hybrid_per_species_splits_each_count():
-    X, species = _species_data()
-    M, f = 30, 0.5
-    counts = np.bincount(species[do_fps(X, M)], minlength=3)
-    got = select_sparse(X, species, M, rule="hybrid", budget="per_species", hybrid_fraction=f, ncand=0, neval=0)
-    assert np.bincount(species[got], minlength=3).tolist() == counts.tolist()
-    pos = 0
-    for s in range(3):
-        mine = got[pos:pos + counts[s]]
-        n1 = int(np.floor(f * counts[s] + 0.5))
-        m = np.flatnonzero(species == s)
-        alone = select_sparse(X[m], np.zeros(len(m), int), n1, rule="totalnov", ncand=0, neval=0) if n1 else []
-        assert [int(np.searchsorted(m, p)) for p in mine[:n1]] == list(alone)
-        pos += counts[s]
-
-
 def test_hybrid_fraction_must_be_in_unit_interval():
     X, species = _species_data()
     for f in (-0.1, 1.5, True):
         with pytest.raises(ValueError):
-            select_sparse(X, species, 10, rule="hybrid", hybrid_fraction=f)
+            select_sparse(X, species, 10, hybrid_fraction=f)

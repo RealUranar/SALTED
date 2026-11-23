@@ -964,31 +964,13 @@ class ParseConfig:
                 ),  # number of sparsified atomic environments
                 "sparse_selection": (
                     False,
-                    "fps",
+                    "hybrid",
                     str,
-                    lambda inp, val: val in ("fps", "maxnov", "totalnov", "hybrid"),
+                    lambda inp, val: val in ("fps", "hybrid"),
                 ),  # rule that picks the Menv reference environments
-                "sparse_budget": (
-                    False,
-                    "shared",
-                    str,
-                    lambda inp, val: val in ("shared", "per_species"),
-                ),  # one pooled budget, or per-species counts taken from pooled FPS
-                "sparse_ncand": (
-                    False,
-                    256,
-                    int,
-                    lambda inp, val: not isinstance(val, bool) and val >= 0,
-                ),  # totalnov candidate subsample per species and step, 0 = all
-                "sparse_neval": (
-                    False,
-                    4096,
-                    int,
-                    lambda inp, val: not isinstance(val, bool) and val >= 0,
-                ),  # totalnov evaluation subsample per species and step, 0 = all
                 "sparse_hybrid_fraction": (
                     False,
-                    0.8,
+                    0.6,
                     (int, float),
                     lambda inp, val: not isinstance(val, bool) and 0 <= val <= 1,
                 ),  # hybrid: share of Menv picked by totalnov before the maxnov tail

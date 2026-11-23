@@ -1,4 +1,4 @@
-"""Sparse (reference) environment selection: pooled FPS and kernel-novelty rules.
+"""Sparse (reference) environment selection by kernel novelty, the hybrid rule.
 
 Kernel: k(a, b) = (x_a . x_b) ** zeta on the lambda = 0 descriptor rows as stored,
 the same kernel rkhs_projector and the prediction use at lambda = 0. Kernels exist only
@@ -9,32 +9,24 @@ within a species. Novelty of atom a w.r.t. a reference set R of its species:
 r the residual kernel, kept per species as an incremental pivoted Cholesky factor
 L (N_s x m, one column per reference) and the residual diagonal d = diag(r).
 
-Rules (per species):
-    maxnov   next reference = highest d_i / k_ii.
+Hybrid rule: the first round(f M) references (f = sparse_hybrid_fraction, rounded half up)
+by totalnov, the rest by maxnov on the same Cholesky factors; f = 1 is totalnov alone,
+f = 0 maxnov alone.
     totalnov next reference = candidate i maximising the novelty it removes,
              gain_i = sum_j r(j, i)^2 / (k_jj r(i, i)) over the valid atoms j of the species,
-             i over a candidate subsample (ncand). With an evaluation subsample E (neval) the
-             own term j = i, which is i's novelty, is taken exactly and the other terms are
-             estimated as (n_valid - 1) / |E - {i}| * sum over E - {i}, so species of
-             different size are comparable in the shared budget. Exact greedy when
-             ncand = neval = 0. Subsamples are fresh draws, without replacement, from one
-             numpy Generator seeded by inp.salted.seed, made each time a species is evaluated.
-    hybrid   the first round(f M) references by totalnov, the rest by maxnov on the same
-             Cholesky factors (f = sparse_hybrid_fraction, rounded half up; per species
-             with per_species). f = 1 is totalnov, f = 0 is maxnov.
+             i over ncand drawn candidates. The own term j = i, which is i's novelty, is
+             taken exactly and the other terms are estimated from neval drawn atoms as
+             (n_valid - 1) / |E - {i}| * sum over E - {i}, so species of different size are
+             comparable. ncand = neval = 0 is the exact greedy (tests). Draws are fresh,
+             without replacement, from one numpy Generator seeded by inp.salted.seed, made
+             each time a species is evaluated.
+    maxnov   next reference = highest d_i / k_ii.
 
-Budgets:
-    shared       one budget M over all species; each step picks the species whose best
-                 candidate scores highest. Only the species that got the pick is
-                 re-evaluated; every other species keeps its cached best candidate (for
-                 totalnov its cached subsample draw too), which stays exact because a
-                 species' residual kernel changes only when it gains a reference.
-                 A species stops being eligible once its largest normalised residual is
-                 below RTOL.
-    per_species  each species gets the count that pooled FPS (do_fps) gives it; when a
-                 species runs out of novel atoms it keeps picking the highest remaining
-                 residual, with a warning. Raises if a count exceeds the species' atoms, or
-                 (fps) if FPS within a species repeats an index.
+Budget: one budget M over all species; each step picks the species whose best candidate
+scores highest. Only the species that got the pick is re-evaluated; every other species
+keeps its cached best candidate (for totalnov its cached subsample draw too), which stays
+exact because a species' residual kernel changes only when it gains a reference. A species
+stops being eligible once its largest normalised residual is below RTOL.
 
 Atoms with k(a, a) <= 0 or a non-finite self-kernel are never candidates and are left
 out of the totalnov evaluation sums; their count is printed.
@@ -42,10 +34,8 @@ out of the totalnov evaluation sums; their count is printed.
 
 import numpy as np
 
-from salted.sys_utils import do_fps
-
-RULES = ("fps", "maxnov", "totalnov", "hybrid")
-BUDGETS = ("shared", "per_species")
+NCAND = 256  # totalnov candidates per species and step
+NEVAL = 4096  # totalnov evaluation atoms per species and step
 RTOL = 1e-12  # relative residual below which an atom adds no new direction
 _BLOCK = 32 << 20  # float64 entries per kernel block in the totalnov gain
 
@@ -164,116 +154,64 @@ def residual_novelty(X_s, ref_idx, zeta, eval_idx=None):
     return nov if eval_idx is None else nov[inv[len(ref_idx):]]
 
 
-def _n_first(f, n):
-    """hybrid: picks made by totalnov out of n (f n rounded half up)"""
-    return int(np.floor(f * n + 0.5))
-
-
-def _phase(rule, k, n_first):
-    """rule used for pick k (0-based)"""
-    if rule != "hybrid":
-        return rule
-    return "totalnov" if k < n_first else "maxnov"
-
-
-def _check(rule, budget, ncand, neval, seed, f=0.8):
+def _check(ncand, neval, seed, f):
     if not isinstance(f, (int, float, np.floating)) or isinstance(f, bool) or not 0 <= f <= 1:
         raise ValueError(f"sparse_hybrid_fraction must be in [0, 1], got {f!r}")
-    if rule not in RULES:
-        raise ValueError(f"sparse_selection must be one of {RULES}, got {rule!r}")
-    if budget not in BUDGETS:
-        raise ValueError(f"sparse_budget must be one of {BUDGETS}, got {budget!r}")
-    for name, v in (("sparse_ncand", ncand), ("sparse_neval", neval), ("salted.seed", seed)):
+    for name, v in (("ncand", ncand), ("neval", neval), ("salted.seed", seed)):
         if not isinstance(v, (int, np.integer)) or isinstance(v, bool) or v < 0:
             raise ValueError(f"{name} must be an int >= 0, got {v!r}")
 
 
-def select_sparse(X, species, M, rule="fps", budget="shared", zeta=2.0,
-                  ncand=256, neval=4096, seed=42, nspecies=None, verbose=False, hybrid_fraction=0.8):
-    """Indices (rows of X, in pick order) of the M reference environments.
+def select_sparse(X, species, M, zeta=2.0, hybrid_fraction=0.6, ncand=NCAND, neval=NEVAL,
+                  seed=42, nspecies=None, verbose=False):
+    """Indices (rows of X, in pick order) of the M reference environments by the hybrid rule.
 
     X: (N, nfeat) lambda = 0 descriptor rows of the dense training atoms.
     species: (N,) int species index of each row.
-    fps + shared is today's pooled do_fps(X, M) unchanged (no uniqueness guarantee).
     """
-    _check(rule, budget, ncand, neval, seed, hybrid_fraction)
+    _check(ncand, neval, seed, hybrid_fraction)
     species = np.asarray(species, int)
     if M > len(X):
         raise ValueError(f"Menv ({M}) cannot exceed the {len(X)} atomic environments.")
-    if rule == "fps" and budget == "shared":
-        return np.array(do_fps(X, M, verbose=verbose), int)
 
     nspecies = int(species.max()) + 1 if nspecies is None else nspecies
     members = [np.flatnonzero(species == s) for s in range(nspecies)]
-    print(f"Sparse selection: rule={rule} budget={budget} Menv={M} zeta={zeta} "
-          f"ncand={ncand} neval={neval} seed={seed}"
-          + (f" hybrid_fraction={hybrid_fraction}" if rule == "hybrid" else ""))
+    print(f"Sparse selection: hybrid Menv={M} zeta={zeta} hybrid_fraction={hybrid_fraction} "
+          f"ncand={ncand} neval={neval} seed={seed}")
 
-    counts = None
-    if budget == "per_species":
-        counts = np.bincount(species[np.array(do_fps(X, M, verbose=verbose), int)], minlength=nspecies)
-        print("Per-species budget from pooled FPS:", counts.tolist())
-        for s in np.flatnonzero(counts > np.array([len(m) for m in members])):
-            raise ValueError(f"species {s}: pooled FPS assigns {counts[s]} references but the species has "
-                             f"only {len(members[s])} atoms (pooled FPS repeated indices)")
-        if rule == "fps":
-            picks = []
-            for s in range(nspecies):
-                if counts[s]:
-                    p = np.array(do_fps(X[members[s]], counts[s], verbose=verbose), int)
-                    if len(np.unique(p)) < len(p):
-                        raise ValueError(f"species {s}: FPS within the species repeated {len(p) - len(np.unique(p))} "
-                                         f"of {counts[s]} indices (fewer distinct environments than its budget)")
-                    picks.append(members[s][p])
-            return np.concatenate(picks)
-
-    nmax = max(len(m) for m in members)
-    if rule in ("totalnov", "hybrid") and ncand == 0 and neval == 0 and nmax > 20000:
-        print(f"WARNING: exact totalnov (ncand = neval = 0) costs O(N_s^2 (nfeat + m)) per pick; "
-              f"largest species has {nmax} atoms")
     rng = np.random.default_rng(seed)
     chols = []
     for s in range(nspecies):
-        cap = counts[s] if counts is not None else 64
-        ch = IncrementalCholesky(np.ascontiguousarray(X[members[s]]), zeta, cap=cap)
+        ch = IncrementalCholesky(np.ascontiguousarray(X[members[s]]), zeta)
         nbad = len(members[s]) - int(ch.valid.sum())
         if nbad:
             print(f"Species {s}: {nbad} of {len(members[s])} atoms excluded (k(a,a) <= 0 or non-finite)")
         chols.append(ch)
 
+    n1 = int(np.floor(hybrid_fraction * M + 0.5))  # picks made by totalnov
+
+    def rule(k):
+        return "totalnov" if k < n1 else "maxnov"
+
     picks = []
     nfallback = np.zeros(nspecies, int)
-    if counts is not None:
-        for s, ch in enumerate(chols):
-            n1 = _n_first(hybrid_fraction, counts[s])
-            for k in range(counts[s]):
-                score, p = ch.best(_phase(rule, k, n1), rng, ncand, neval)
-                if p < 0:
-                    score, p = ch.fallback()
-                    nfallback[s] += 1
-                ch.add(p)
-                picks.append(members[s][p])
-                if verbose:
-                    print(f"species {s} pick {len(picks)} of {M} score = {score}")
-    else:
-        n1 = _n_first(hybrid_fraction, M)
-        best = [ch.best(_phase(rule, 0, n1), rng, ncand, neval) for ch in chols]
-        for step in range(M):
-            if rule == "hybrid" and step == n1 and step > 0:
-                # cached totalnov gains are not maxnov scores
-                best = [ch.best("maxnov", rng, ncand, neval) for ch in chols]
-            s = int(np.argmax([b[0] for b in best]))
-            score, p = best[s]
-            if p < 0:
-                fb = [ch.fallback() for ch in chols]
-                s = int(np.argmax([f[0] for f in fb]))
-                score, p = fb[s]
-                nfallback[s] += 1
-            chols[s].add(p)
-            picks.append(members[s][p])
-            best[s] = chols[s].best(_phase(rule, step + 1, n1), rng, ncand, neval)
-            if verbose:
-                print(f"Doing {step + 1} of {M}: species {s} score = {score}")
+    best = [ch.best(rule(0), rng, ncand, neval) for ch in chols]
+    for step in range(M):
+        if step == n1 and step > 0:
+            # cached totalnov gains are not maxnov scores
+            best = [ch.best("maxnov", rng, ncand, neval) for ch in chols]
+        s = int(np.argmax([b[0] for b in best]))
+        score, p = best[s]
+        if p < 0:
+            fb = [ch.fallback() for ch in chols]
+            s = int(np.argmax([f[0] for f in fb]))
+            score, p = fb[s]
+            nfallback[s] += 1
+        chols[s].add(p)
+        picks.append(members[s][p])
+        best[s] = chols[s].best(rule(step + 1), rng, ncand, neval)
+        if verbose:
+            print(f"Doing {step + 1} of {M}: species {s} score = {score}")
 
     idx = np.array(picks, int)
     final = np.bincount(species[idx], minlength=nspecies)

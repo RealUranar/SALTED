@@ -58,14 +58,12 @@ def build():
 
     del power
     g = inp.gpr
-    if g.sparse_selection == "fps" and g.sparse_budget == "shared":
+    if g.sparse_selection == "fps":
         fps_idx = np.array(do_fps(power_dense, M, verbose=inp.salted.verbose), int)
     else:
         fps_idx = select_sparse(
-            power_dense, dense_species, M, rule=g.sparse_selection, budget=g.sparse_budget,
-            zeta=g.z, ncand=g.sparse_ncand, neval=g.sparse_neval, seed=inp.salted.seed,
-            nspecies=len(species), verbose=inp.salted.verbose,
-            hybrid_fraction=float(g.sparse_hybrid_fraction),
+            power_dense, dense_species, M, zeta=g.z, hybrid_fraction=float(g.sparse_hybrid_fraction),
+            seed=inp.salted.seed, nspecies=len(species), verbose=inp.salted.verbose,
         )
     fps_species = dense_species[fps_idx]
     sparse_set = np.vstack((fps_idx, fps_species)).T
