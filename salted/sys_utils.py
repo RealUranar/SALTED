@@ -819,7 +819,7 @@ class ParseConfig:
                     lambda inp, val: val in ("density", "density-response"),
                 ),  # salted target
                 "verbose": (False, False, bool, None),  # whether print verbose info
-                "seed": (False, 42, int, None),  # random seed
+                "seed": (False, 42, int, lambda inp, val: not isinstance(val, bool) and val >= 0),  # random seed
             },
             "system": {
                 "filename": (
@@ -962,6 +962,18 @@ class ParseConfig:
                     int,
                     lambda inp, val: val > 0,
                 ),  # number of sparsified atomic environments
+                "sparse_selection": (
+                    False,
+                    "fps",
+                    str,
+                    lambda inp, val: val in ("fps", "hybrid"),
+                ),  # rule that picks the Menv reference environments
+                "sparse_hybrid_fraction": (
+                    False,
+                    0.6,
+                    (int, float),
+                    lambda inp, val: not isinstance(val, bool) and 0 <= val <= 1,
+                ),  # hybrid: share of Menv picked by totalnov before the maxnov tail
                 "Ntrain": (
                     True,
                     None,

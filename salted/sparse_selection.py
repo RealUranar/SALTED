@@ -3,6 +3,7 @@ import h5py
 import os.path as osp
 
 from salted.sys_utils import ParseConfig, get_atom_idx, read_system, do_fps
+from salted.novelty_selection import select_sparse
 
 def _load_training_indices(inp):
     path = osp.join(
@@ -55,7 +56,15 @@ def build():
             f"Menv ({M}) cannot exceed the {natoms_total} atomic environments in the selected Ntrain set."
         )
 
-    fps_idx = np.array(do_fps(power_dense, M, verbose=inp.salted.verbose), int)
+    del power
+    g = inp.gpr
+    if g.sparse_selection == "fps":
+        fps_idx = np.array(do_fps(power_dense, M, verbose=inp.salted.verbose), int)
+    else:
+        fps_idx = select_sparse(
+            power_dense, dense_species, M, zeta=g.z, hybrid_fraction=float(g.sparse_hybrid_fraction),
+            seed=inp.salted.seed, nspecies=len(species), verbose=inp.salted.verbose,
+        )
     fps_species = dense_species[fps_idx]
     sparse_set = np.vstack((fps_idx, fps_species)).T
     print("Computed sparse set made of ", M, "environments")

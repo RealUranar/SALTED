@@ -19,7 +19,7 @@ For all the path-related variables, the path can be either a relative path or an
 | `saltedname` | `str` | **Required** | A label to identify a particular SALTED setup. |
 | `saltedpath` | `str` | **Required** | Location of all files produced by SALTED. Either relative to the working directory or an absolute path. |
 | `saltedtype` | `str` | `density` | Option for selecting the type of SALTED target (`density` or `density-response`) |
-| `seed` | `int` | `42` | Random seed. Only implemented in parsing input; not implemented in the code. |
+| `seed` | `int` (≥ 0) | `42` | Random seed. Used only by `gpr.sparse_selection: hybrid` (its subsample draws). |
 | `verbose` | `bool` | `False` | Output verbosity. |
 
 ### System difinition `inp.system`
@@ -84,6 +84,8 @@ Remember to set `inp.predict` if one wants to predict densities.
 | -:| :-: | :-: | :- |
 | `z` | `float` | `2.0` | Kernel exponent $\zeta$. |
 | `Menv` | `int` | **Required** | Number of reference environments. |
+| `sparse_selection` | `Literal["fps"] \| Literal["hybrid"]` | `"fps"` | Rule that picks the `Menv` reference environments in `sparse_selection`, on the $\lambda=0$ rows of `FEAT-0.h5`, with one budget of `Menv` over all species. `"fps"`: farthest point sampling over all atoms pooled (squared Euclidean distance), the original selection. `"hybrid"`: kernel novelty, with the prediction kernel $k(a,b)=(\mathbf{x}_a\cdot\mathbf{x}_b)^\zeta$ within each species and the novelty $1 - k_{aR}K_{RR}^{-1}k_{Ra}/k(a,a)$ of an atom w.r.t. the references $R$ of its species (incremental Cholesky, see `salted/novelty_selection.py`). The first `sparse_hybrid_fraction` of the references (rounded half up) each go to the atom that removes the most novelty summed over the atoms of its species (estimated from 256 candidates and 4096 evaluation atoms per species and step, drawn with `salted.seed`), the rest to the most novel atom; each step goes to the species with the best candidate, so a species can end with very few references (a warning is printed below 2). |
+| `sparse_hybrid_fraction` | `float` | `0.6` | `hybrid` only: share $f \in [0,1]$ of the references picked by summed novelty before the most-novel-atom tail. |
 | `Ntrain` | `int` | **Required** | Number of training structures. |
 | `trainfrac` | `float` | `1.0` | Training dataset fraction. Training dataset size is `Ntrain * trainfrac`. |
 | `regul` | `float` | `1e-6` | Regularization parameter $\eta$. |
