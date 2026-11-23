@@ -964,7 +964,7 @@ class ParseConfig:
                 ),  # number of sparsified atomic environments
                 "sparse_selection": (
                     False,
-                    "hybrid",
+                    "fps",
                     str,
                     lambda inp, val: val in ("fps", "hybrid"),
                 ),  # rule that picks the Menv reference environments

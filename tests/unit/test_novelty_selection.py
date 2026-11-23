@@ -191,11 +191,11 @@ def _run_dir(tmp_path, gpr_extra):
     return feat.reshape(-1, nfeat), np.tile([1, 0, 0], ntrain)  # species index in ["H", "O"]
 
 
-def test_build_fps_file_is_byte_identical(tmp_path, monkeypatch):
-    """sparse_selection: fps must write what the original code wrote: do_fps on the dense rows, %i savetxt."""
+def test_build_default_file_is_byte_identical(tmp_path, monkeypatch):
+    """Default keys must write what the original code wrote: do_fps on the dense rows, %i savetxt."""
     from salted import sparse_selection
 
-    dense, spe = _run_dir(tmp_path, {"sparse_selection": "fps"})
+    dense, spe = _run_dir(tmp_path, {})
     monkeypatch.chdir(tmp_path)
     sparse_selection.build()
     fps_idx = np.array(do_fps(dense, 9), int)
@@ -203,11 +203,11 @@ def test_build_fps_file_is_byte_identical(tmp_path, monkeypatch):
     assert (tmp_path / "equirepr_t" / "sparse_set_9.txt").read_bytes() == (tmp_path / "expected.txt").read_bytes()
 
 
-def test_build_default_is_hybrid(tmp_path, monkeypatch):
-    """Without sparse keys the file holds select_sparse's hybrid picks (f 0.6, seed 42) and their species."""
+def test_build_hybrid_file(tmp_path, monkeypatch):
+    """sparse_selection: hybrid writes select_sparse's picks (default f 0.6, seed 42) and their species."""
     from salted import sparse_selection
 
-    dense, spe = _run_dir(tmp_path, {})
+    dense, spe = _run_dir(tmp_path, {"sparse_selection": "hybrid"})
     monkeypatch.chdir(tmp_path)
     sparse_selection.build()
     out = np.loadtxt(tmp_path / "equirepr_t" / "sparse_set_9.txt", dtype=int)

@@ -164,9 +164,9 @@ def test_gpr_preconditioner(tmp_path, monkeypatch, value, ok):
 @pytest.mark.parametrize(
     "key, value, ok, default",
     [
-        ("sparse_selection", None, True, "hybrid"),
-        ("sparse_selection", "fps", True, "hybrid"),
-        ("sparse_selection", "totalnov", False, "hybrid"),
+        ("sparse_selection", None, True, "fps"),
+        ("sparse_selection", "hybrid", True, "fps"),
+        ("sparse_selection", "totalnov", False, "fps"),
         ("sparse_budget", "shared", False, None),
         ("sparse_ncand", 256, False, None),
         ("sparse_neval", 4096, False, None),
